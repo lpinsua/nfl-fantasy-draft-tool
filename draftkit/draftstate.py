@@ -22,6 +22,10 @@ class DraftMeta:
     rounds: int
     reversal_round: int = 0
     budget: int = 0
+    # Epoch milliseconds, straight from Sleeper.
+    start_time: int = 0
+    last_picked: int = 0
+    pick_timer: int = 0          # seconds allowed per pick, 0 = untimed
     draft_order: dict[str, int] = field(default_factory=dict)   # user_id -> slot
     slot_to_roster: dict[str, int] = field(default_factory=dict)
 
@@ -45,6 +49,9 @@ def parse_draft(raw: dict) -> DraftMeta:
         rounds=int(settings.get("rounds") or 15),
         reversal_round=int(settings.get("reversal_round") or 0),
         budget=int(settings.get("budget") or 0),
+        start_time=int(raw.get("start_time") or 0),
+        last_picked=int(raw.get("last_picked") or 0),
+        pick_timer=int(settings.get("pick_timer") or 0),
         draft_order={str(k): int(v) for k, v in (raw.get("draft_order") or {}).items()},
         slot_to_roster={str(k): v for k, v in (raw.get("slot_to_roster_id") or {}).items()},
     )

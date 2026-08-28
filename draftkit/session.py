@@ -122,8 +122,31 @@ class Session:
             log.warning("pick sync failed: %s", exc)
             return
 
+        # Refresh the draft object too: status, the pick clock and the start
+        # time all move during a draft, and they are what the countdown reads.
+        try:
+            raw_draft = self.client.draft(meta.draft_id)
+        except SleeperError as exc:
+            raw_draft = None
+            log.debug("draft refresh failed (non-fatal): %s", exc)
+        if raw_draft:
+            fresh = parse_draft(raw_draft)
+            with self.lock:
+                meta.status = fresh.status
+                meta.last_picked = fresh.last_picked
+                meta.start_time = fresh.start_time
+                meta.pick_timer = fresh.pick_timer
+                if fresh.draft_order and not meta.draft_order:
+                    # The order is published once the commissioner sets it.
+                    meta.draft_order = fresh.draft_order
+                    if self.state and not self.state.my_slot and self.my_user_id:
+                        self.state.my_slot = fresh.draft_order.get(str(self.my_user_id))
+
         with self.lock:
             merged = list(picks)
+            # Once Sleeper reports a pick for real, drop our hand-made stand-in
+            # so the player stops offering an "undo" that would do nothing.
+            self.manual_picks -= {str(p.get("player_id")) for p in merged}
             if self.manual_picks:
                 known = {str(p.get("player_id")) for p in merged}
                 offset = len(merged)
@@ -204,6 +227,12 @@ class Session:
                 "budget": self.meta.budget if self.meta else 0,
                 "my_spend": state.my_spend(),
                 "my_slot": state.my_slot,
+                "status": self.meta.status if self.meta else "",
+                "start_time": self.meta.start_time if self.meta else 0,
+                "last_picked": self.meta.last_picked if self.meta else 0,
+                "pick_timer": self.meta.pick_timer if self.meta else 0,
+                "server_now": int(time.time() * 1000),
+                "manual": sorted(self.manual_picks),
                 "next_picks": state.next_picks(3),
                 "picks_until_turn": state.picks_until_my_turn,
                 "drafted": sorted(state.drafted),

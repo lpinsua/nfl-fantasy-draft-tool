@@ -139,6 +139,7 @@ def make_draft(
     my_user_id: str = "U7",
     my_slot: int = 7,
     budget: int = 0,
+    pick_timer: int = 0,
 ) -> dict:
     order = {f"U{s}": s for s in range(1, teams + 1)}
     order[my_user_id] = my_slot
@@ -149,8 +150,8 @@ def make_draft(
         "type": draft_type,
         "season": "2026",
         "settings": {
-            "teams": teams, "rounds": rounds,
-            "reversal_round": reversal_round, "budget": budget,
+            "teams": teams, "rounds": rounds, "reversal_round": reversal_round,
+            "budget": budget, "pick_timer": pick_timer,
         },
         "draft_order": order,
         "slot_to_roster_id": {str(s): s for s in range(1, teams + 1)},
@@ -185,7 +186,8 @@ class DemoClient:
     """
 
     def __init__(self, start_picks: int = 0, seconds_per_pick: float = 4.0,
-                 draft_type: str = "snake", teams: int = 12, rounds: int = 15):
+                 draft_type: str = "snake", teams: int = 12, rounds: int = 15,
+                 pick_timer: int = 0):
         self.players_meta = make_players()
         self.projections_data = make_projections(self.players_meta)
         self.teams = teams
@@ -193,6 +195,9 @@ class DemoClient:
         self.draft_type = draft_type
         self.start_picks = start_picks
         self.seconds_per_pick = seconds_per_pick
+        # Default the demo's pick clock to match its pick pace, so the
+        # countdown behaves like a real timed draft.
+        self.pick_timer = pick_timer or int(seconds_per_pick) or 0
         self.started = time.time()
         # Filled in once the board has been built and ranked.
         self.board_order: list[str] = []
@@ -237,19 +242,29 @@ class DemoClient:
     def _budget(self) -> int:
         return 200 if self.draft_type == "auction" else 0
 
-    def league_drafts(self, league_id: str) -> list[dict]:
-        return [
-            make_draft(
-                teams=self.teams, rounds=self.rounds,
-                draft_type=self.draft_type, budget=self._budget(),
-            )
-        ]
+    def _last_picked_ms(self) -> int:
+        """When the most recent simulated pick landed, so the clock ticks down."""
+        now = time.time()
+        if self.seconds_per_pick <= 0:
+            return int((now - 15) * 1000)
+        elapsed = now - self.started
+        return int((now - (elapsed % self.seconds_per_pick)) * 1000)
 
-    def draft(self, draft_id: str) -> dict:
-        return make_draft(
+    def _draft(self, draft_id: str) -> dict:
+        raw = make_draft(
             draft_id=draft_id, teams=self.teams, rounds=self.rounds,
             draft_type=self.draft_type, budget=self._budget(),
+            pick_timer=self.pick_timer,
         )
+        raw["last_picked"] = self._last_picked_ms()
+        raw["start_time"] = int((self.started - 60) * 1000)
+        return raw
+
+    def league_drafts(self, league_id: str) -> list[dict]:
+        return [self._draft("D1")]
+
+    def draft(self, draft_id: str) -> dict:
+        return self._draft(draft_id)
 
     def draft_picks(self, draft_id: str) -> list[dict]:
         if not self.board_order:

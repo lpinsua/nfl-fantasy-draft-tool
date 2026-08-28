@@ -6,13 +6,33 @@ const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 const state = {
   board: [],          // full ranked player list, fetched once
   drafted: new Set(),
+  manual: new Set(),  // ids you marked by hand, which you can undo
   live: null,
   status: null,
   filter: 'ALL',
   query: '',
   showDrafted: false,
   timer: null,
+  tick: null,
+  // Offset between this browser's clock and the server's, so the countdown
+  // stays right even if the laptop clock is off.
+  clockSkew: 0,
+  lastMark: null,
+  undoTimer: null,
 };
+
+const pad = (n) => String(n).padStart(2, '0');
+
+function humanCountdown(ms) {
+  if (ms < 0) ms = 0;
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${pad(m)}m`;
+  if (m > 0) return `${m}:${pad(s)}`;
+  return `0:${pad(s)}`;
+}
 
 /* ---------------- helpers ---------------- */
 
@@ -106,6 +126,52 @@ async function connect(payload) {
 function startPolling() {
   if (state.timer) clearInterval(state.timer);
   state.timer = setInterval(tick, 2500);
+  // The countdown redraws every second locally rather than waiting on the
+  // poll, so it counts down smoothly instead of jumping in 2.5s steps.
+  if (state.tick) clearInterval(state.tick);
+  state.tick = setInterval(renderCountdown, 1000);
+}
+
+/** Time until the draft starts, or time left on the current pick. */
+function renderCountdown() {
+  const el = $('countdown');
+  const l = state.live;
+  if (!l) return el.classList.add('hidden');
+
+  const now = Date.now() + state.clockSkew;
+
+  // Before the draft: count down to the scheduled start.
+  if (l.status && l.status !== 'drafting' && l.status !== 'complete') {
+    if (l.start_time && l.start_time > now) {
+      el.textContent = `Draft starts in ${humanCountdown(l.start_time - now)}`;
+      el.className = 'countdown pre';
+    } else {
+      el.textContent = l.start_time ? 'Draft starting…' : 'Draft not scheduled yet';
+      el.className = 'countdown pre';
+    }
+    return;
+  }
+
+  if (l.status === 'complete') {
+    el.textContent = 'Draft complete';
+    el.className = 'countdown';
+    return;
+  }
+
+  // During the draft: time left on the pick clock, if the league uses one.
+  if (l.pick_timer && l.last_picked) {
+    const deadline = l.last_picked + l.pick_timer * 1000;
+    const left = deadline - now;
+    if (left > 0) {
+      el.textContent = `${humanCountdown(left)} on this pick`;
+      el.className = 'countdown' + (left < 30000 ? ' urgent' : '');
+    } else {
+      el.textContent = 'pick clock expired';
+      el.className = 'countdown urgent';
+    }
+    return;
+  }
+  el.classList.add('hidden');
 }
 
 async function tick() {
@@ -114,8 +180,11 @@ async function tick() {
     if (!live.connected) return;
     state.live = live;
     state.drafted = new Set(live.drafted || []);
+    state.manual = new Set(live.manual || []);
+    if (live.server_now) state.clockSkew = live.server_now - Date.now();
     setSync(true, live.error);
     renderClock();
+    renderCountdown();
     renderRecs();
     renderRoster();
     renderRecent();
@@ -278,6 +347,16 @@ function renderRecent() {
     : '<li class="empty">Waiting for the first pick…</li>';
 }
 
+/** The × / ↺ cell. Only marks you made by hand can be undone here. */
+function actionCell(p, isDrafted) {
+  const manual = state.manual && state.manual.has(p.id);
+  if (isDrafted && !manual) {
+    return '<span class="muted" title="Drafted in Sleeper — can\'t be undone here">·</span>';
+  }
+  return `<button class="mark" data-id="${esc(p.id)}" data-drafted="${manual ? '1' : '0'}"
+    title="${manual ? 'Undo this manual mark' : 'Mark as drafted'}">${manual ? '↺' : '×'}</button>`;
+}
+
 function renderTable() {
   const body = $('players-body');
   // "value vs. current pick" is meaningless without a pick order.
@@ -316,10 +395,7 @@ function renderTable() {
       <td class="c-num">${p.vorp > 0 ? '+' : ''}${p.vorp}</td>
       <td class="c-num">${p.adp != null ? p.adp : '—'}</td>
       <td class="c-num ${valCls}">${val == null ? '—' : (val > 0 ? '+' : '') + val}</td>
-      <td class="c-act">
-        <button class="mark" data-id="${esc(p.id)}" data-drafted="${isDrafted ? '1' : '0'}"
-          title="${isDrafted ? 'Undo' : 'Mark drafted'}">${isDrafted ? '↺' : '×'}</button>
-      </td>
+      <td class="c-act">${actionCell(p, isDrafted)}</td>
     </tr>`);
   }
 
@@ -359,14 +435,65 @@ $('players-body').onclick = async (e) => {
   const btn = e.target.closest('button.mark');
   if (!btn) return;
   const drafted = btn.dataset.drafted === '1';
+  const id = btn.dataset.id;
   btn.disabled = true;
   try {
-    await post('/api/mark', { player_id: btn.dataset.id, drafted: !drafted });
+    await post('/api/mark', { player_id: id, drafted: !drafted });
+    // Marking hides the player, so offer the way back immediately rather than
+    // making you hunt for him behind "show drafted".
+    if (!drafted) showUndo(id);
+    else hideUndo();
     await tick();
   } catch (err) {
     setSync(false, err.message);
   }
 };
+
+function showUndo(id) {
+  const player = state.board.find((p) => p.id === id);
+  state.lastMark = id;
+  $('undo-text').textContent = `Marked ${player ? player.name : 'player'} as drafted.`;
+  $('undo-bar').classList.remove('hidden');
+  if (state.undoTimer) clearTimeout(state.undoTimer);
+  state.undoTimer = setTimeout(hideUndo, 12000);
+}
+
+function hideUndo() {
+  state.lastMark = null;
+  $('undo-bar').classList.add('hidden');
+  if (state.undoTimer) clearTimeout(state.undoTimer);
+}
+
+$('undo-btn').onclick = async () => {
+  if (!state.lastMark) return hideUndo();
+  const id = state.lastMark;
+  hideUndo();
+  try {
+    await post('/api/mark', { player_id: id, drafted: false });
+    await tick();
+  } catch (err) {
+    setSync(false, err.message);
+  }
+};
+
+// ---- glossary ----
+function toggleHelp(show) {
+  const overlay = $('help-overlay');
+  const open = show === undefined ? overlay.classList.contains('hidden') : show;
+  overlay.classList.toggle('hidden', !open);
+}
+
+$('help-btn').onclick = () => toggleHelp(true);
+$('help-close').onclick = () => toggleHelp(false);
+$('help-overlay').onclick = (e) => {
+  if (e.target === $('help-overlay')) toggleHelp(false);
+};
+
+document.addEventListener('keydown', (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test((e.target || {}).tagName || '');
+  if (e.key === 'Escape') toggleHelp(false);
+  else if (e.key === '?' && !typing) toggleHelp();
+});
 
 $('force-sync').onclick = async () => {
   try {

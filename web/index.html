@@ -48,18 +48,96 @@
       <span id="my-team" class="pill pill-me"></span>
     </div>
     <div class="clock">
+      <div id="countdown" class="countdown hidden"></div>
       <div id="clock-main" class="clock-main">—</div>
       <div id="clock-sub" class="clock-sub"></div>
     </div>
     <div class="topbar-right">
       <span id="sync-dot" class="dot"></span>
       <span id="sync-text" class="sync-text">connecting</span>
-      <button id="force-sync" class="ghost" title="Force a refresh">↻</button>
+      <button id="force-sync" class="ghost" title="Force a refresh from Sleeper">↻</button>
+      <button id="help-btn" class="ghost" title="What do these numbers mean?">?</button>
     </div>
   </header>
 
   <div id="turn-banner" class="turn-banner hidden">YOU'RE ON THE CLOCK</div>
+  <div id="undo-bar" class="undo-bar hidden">
+    <span id="undo-text"></span>
+    <button id="undo-btn">Undo</button>
+  </div>
   <div id="board-notes" class="notes hidden"></div>
+
+  <!-- Glossary -->
+  <div id="help-overlay" class="overlay hidden">
+    <div class="help-card">
+      <div class="help-head">
+        <h2>What the numbers mean</h2>
+        <button id="help-close" class="ghost">✕</button>
+      </div>
+      <dl class="glossary">
+        <dt>VORP <span class="hint">the ranking that matters</span></dt>
+        <dd>
+          <strong>Value Over Replacement Player.</strong> Points above the best player you
+          could get for free at that position — the last one who'd still be starting in
+          your league. A 280-point QB can be worth <em>less</em> than a 150-point TE,
+          because what matters is the gap to the next guy at the position, not the raw
+          total. <strong>Sort by this, not Proj.</strong>
+        </dd>
+
+        <dt>Proj</dt>
+        <dd>
+          Projected fantasy points for the full season, scored with
+          <em>your league's exact scoring rules</em> — your reception value, your passing
+          TD value, any bonuses. Useful, but never compare it across positions; that's
+          what VORP is for.
+        </dd>
+
+        <dt>ADP</dt>
+        <dd>
+          <strong>Average Draft Position.</strong> Where this player typically goes across
+          all Sleeper drafts in your league's format. It reflects
+          <em>what the room thinks</em>, not what a player is worth to you.
+        </dd>
+
+        <dt>Val</dt>
+        <dd>
+          ADP minus the current pick. <span class="ex good">Green (+)</span> means he's
+          lasted past where he usually goes — value falling to you.
+          <span class="ex bad">Red (−)</span> means taking him here is a reach.
+          A tiebreaker between similar VORP, not a ranking on its own.
+        </dd>
+
+        <dt>Tier</dt>
+        <dd>
+          Players grouped by position where the drop-off between them is small. A tier
+          break is a genuine cliff. <strong>Take the last player in a tier over the first
+          of the next</strong> — and if only one is left in a tier, that's your cue to act.
+        </dd>
+
+        <dt>Take now</dt>
+        <dd>
+          Not raw VORP. It weights VORP by what your roster still needs, then adds urgency
+          for positions about to dry up before your next turn (VONA — value over next
+          available). It answers "who should <em>I</em> take, <em>now</em>", which is a
+          different question from "who is best".
+        </dd>
+
+        <dt>% to last</dt>
+        <dd>
+          Rough odds this player is still on the board when you next pick. Low number on a
+          player you want = take him now; high number = you can probably wait a round.
+        </dd>
+
+        <dt>× and ↺</dt>
+        <dd>
+          <strong>×</strong> marks a player drafted by hand, if Sleeper's feed lags or
+          misses one. <strong>↺</strong> undoes it. You can only undo your own manual
+          marks — real picks from Sleeper can't be reversed here.
+        </dd>
+      </dl>
+      <p class="help-foot">Press <kbd>?</kbd> or <kbd>Esc</kbd> to close.</p>
+    </div>
+  </div>
 
   <main class="grid">
 
@@ -85,13 +163,13 @@
         <table id="players">
           <thead>
             <tr>
-              <th class="c-tier">Tier</th>
+              <th class="c-tier help" title="Tier within position. A tier break is a real drop-off — take the last player in a tier over the first of the next.">Tier</th>
               <th class="c-name">Player</th>
-              <th class="c-pos">Pos</th>
-              <th class="c-num">Proj</th>
-              <th class="c-num">VORP</th>
-              <th class="c-num">ADP</th>
-              <th class="c-num" title="ADP minus current pick. Positive = falling to you.">Val</th>
+              <th class="c-pos help" title="Position, with this player's rank at that position by VORP.">Pos</th>
+              <th class="c-num help" title="Projected season points under YOUR league's exact scoring. Don't compare across positions — use VORP for that.">Proj</th>
+              <th class="c-num help" title="Value Over Replacement Player: points above the best freely available player at this position. This is the ranking that matters.">VORP</th>
+              <th class="c-num help" title="Average Draft Position in your league's format — what the room thinks, not what he's worth to you.">ADP</th>
+              <th class="c-num help" title="ADP minus the current pick. Green = falling to you. Red = a reach. A tiebreaker, not a ranking.">Val</th>
               <th class="c-act"></th>
             </tr>
           </thead>

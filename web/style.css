@@ -107,6 +107,62 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 .dot.err { background: var(--bad); }
 .sync-text { font-size: 12px; color: var(--muted); }
 
+.countdown {
+  font-size: 12px; font-weight: 700; letter-spacing: .04em;
+  color: var(--warn); font-variant-numeric: tabular-nums;
+}
+.countdown.urgent { color: var(--bad); animation: pulse 1s ease-in-out infinite; }
+.countdown.pre { color: var(--accent); }
+
+th.help { cursor: help; text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
+
+/* Undo affordance: a manual mark hides the player, so there has to be a way
+   back that does not depend on finding him again. */
+.undo-bar {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  background: var(--panel-2); border-bottom: 1px solid var(--line);
+  padding: 7px 14px; font-size: 13px; color: var(--muted);
+}
+.undo-bar button { padding: 4px 12px; font-size: 12px; }
+
+/* Glossary */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.62);
+  display: grid; place-items: center; padding: 24px;
+  overflow-y: auto;
+}
+.help-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 13px;
+  max-width: 660px; width: 100%; max-height: 86vh; overflow-y: auto;
+}
+.help-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 22px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--panel);
+}
+.help-head h2 { margin: 0; font-size: 16px; }
+.glossary { margin: 0; padding: 18px 22px; }
+.glossary dt {
+  font-weight: 700; font-size: 14px; margin-top: 18px;
+  display: flex; align-items: baseline; gap: 9px;
+}
+.glossary dt:first-child { margin-top: 0; }
+.glossary dt .hint {
+  font-weight: 400; font-size: 11px; color: var(--good);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.glossary dd { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.glossary dd strong { color: var(--text); }
+.glossary dd em { color: var(--text); font-style: italic; }
+.ex.good { color: var(--good); font-weight: 600; }
+.ex.bad { color: var(--bad); font-weight: 600; }
+.help-foot { color: var(--muted); font-size: 12px; padding: 0 22px 18px; margin: 8px 0 0; }
+kbd {
+  background: var(--panel-2); border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 5px; font-size: 11px; font-family: inherit;
+}
+
 .turn-banner {
   background: linear-gradient(90deg, var(--good), #2ea043);
   color: #04140a; text-align: center; font-weight: 800;
