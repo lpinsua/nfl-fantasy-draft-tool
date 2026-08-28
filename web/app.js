@@ -1,0 +1,399 @@
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
+
+const state = {
+  board: [],          // full ranked player list, fetched once
+  drafted: new Set(),
+  live: null,
+  status: null,
+  filter: 'ALL',
+  query: '',
+  showDrafted: false,
+  timer: null,
+};
+
+/* ---------------- helpers ---------------- */
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`Server returned ${res.status}`);
+  }
+  if (data && data.error) throw new Error(data.error);
+  if (!res.ok) throw new Error(`Server returned ${res.status}`);
+  return data;
+}
+
+const post = (path, body) =>
+  api(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+
+const esc = (s) =>
+  String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const posTag = (p, rank) =>
+  `<span class="pos pos-${esc(p)}">${esc(p)}</span>${rank ? `<span class="posr">${rank}</span>` : ''}`;
+
+/* ---------------- setup screen ---------------- */
+
+async function findLeagues() {
+  const username = $('username').value.trim();
+  if (!username) return;
+  $('setup-error').textContent = '';
+  $('setup-status').textContent = 'looking up your leagues…';
+  $('find-leagues').disabled = true;
+  try {
+    const data = await api(`/api/leagues?username=${encodeURIComponent(username)}`);
+    renderLeagues(data);
+    $('setup-status').textContent = data.leagues.length
+      ? `${data.leagues.length} league(s) for ${data.season}`
+      : `No ${data.season} leagues found for that username.`;
+  } catch (err) {
+    $('setup-error').textContent = err.message;
+    $('setup-status').textContent = '';
+  } finally {
+    $('find-leagues').disabled = false;
+  }
+}
+
+function renderLeagues(data) {
+  const list = $('league-list');
+  list.innerHTML = '';
+  for (const lg of data.leagues) {
+    const el = document.createElement('div');
+    el.className = 'league-item';
+    const live = lg.draft_status === 'drafting';
+    el.innerHTML = `
+      <div>
+        <div class="li-name">${esc(lg.name)}</div>
+        <div class="li-meta">${esc(lg.teams)} teams · ${esc(lg.draft_type || 'draft')} · ${esc(lg.draft_status || 'no draft')}</div>
+      </div>
+      <span class="badge ${live ? 'live' : ''}">${live ? 'DRAFTING' : esc(lg.status || '')}</span>`;
+    el.onclick = () => connect({ league_id: lg.league_id, draft_id: lg.draft_id, username: data.username });
+    list.appendChild(el);
+  }
+}
+
+async function connect(payload) {
+  $('setup-error').textContent = '';
+  $('setup-status').textContent = 'loading players and projections (first run takes a few seconds)…';
+  try {
+    state.status = await post('/api/connect', payload);
+    const board = await api('/api/board');
+    state.board = board.players || [];
+    $('setup').classList.add('hidden');
+    $('board').classList.remove('hidden');
+    renderHeader();
+    await tick();
+    startPolling();
+  } catch (err) {
+    $('setup-error').textContent = err.message;
+    $('setup-status').textContent = '';
+  }
+}
+
+/* ---------------- polling ---------------- */
+
+function startPolling() {
+  if (state.timer) clearInterval(state.timer);
+  state.timer = setInterval(tick, 2500);
+}
+
+async function tick() {
+  try {
+    const live = await api('/api/live');
+    if (!live.connected) return;
+    state.live = live;
+    state.drafted = new Set(live.drafted || []);
+    setSync(true, live.error);
+    renderClock();
+    renderRecs();
+    renderRoster();
+    renderRecent();
+    renderTable();
+  } catch (err) {
+    setSync(false, err.message);
+  }
+}
+
+function setSync(ok, error) {
+  const dot = $('sync-dot');
+  dot.className = 'dot ' + (error ? 'err' : ok ? 'on' : '');
+  $('sync-text').textContent = error ? error.slice(0, 60) : ok ? 'live' : 'reconnecting…';
+}
+
+/* ---------------- rendering ---------------- */
+
+function renderHeader() {
+  const s = state.status;
+  if (!s || !s.connected) return;
+  $('league-name').textContent = s.league.name;
+  $('league-scoring').textContent = s.league.scoring_label;
+  $('league-size').textContent = `${s.league.teams} teams · ${s.draft.rounds} rd · ${s.draft.type}`;
+
+  const slot = s.draft.my_slot;
+  $('my-team').textContent = s.draft.is_auction
+    ? (s.draft.budget ? `Auction · $${s.draft.budget}` : 'Auction')
+    : slot ? `You: pick ${slot}` : 'Slot unknown';
+
+  const notes = [];
+  if (s.draft.is_auction) {
+    notes.push(
+      'AUCTION DRAFT detected — player values, tiers and roster needs are live, ' +
+      'but pick-timing advice is hidden because it does not apply. There is no ' +
+      '$-value or max-bid guidance.'
+    );
+  }
+  if (s.board_source === 'adp') {
+    notes.push('Projections unavailable — values are ADP-derived estimates.');
+  }
+  (s.notes || []).forEach((n) => notes.push(n));
+  if (!slot && !s.draft.is_auction) {
+    notes.push('Could not match your username to a draft slot — "Your roster" and pick timing are off until it starts.');
+  }
+  const box = $('board-notes');
+  box.innerHTML = notes.map(esc).join(' · ');
+  box.classList.toggle('hidden', notes.length === 0);
+}
+
+function renderClock() {
+  const l = state.live;
+  const teams = state.status.draft.teams;
+
+  // An auction has no pick order, so showing a round/pick clock or a
+  // "picks until your turn" countdown would be inventing information.
+  if (l.is_auction) {
+    const spent = l.my_spend || 0;
+    const budget = l.budget || 0;
+    $('clock-main').textContent = `Auction · ${l.picks_made} players rostered`;
+    $('clock-sub').textContent = budget
+      ? `you've spent $${spent} of $${budget} · $${budget - spent} left`
+      : `$${spent} spent`;
+    $('turn-banner').classList.add('hidden');
+    document.title = 'Auction — Draft Board';
+    return;
+  }
+
+  $('clock-main').textContent = `Round ${l.round} · Pick ${l.on_the_clock} overall`;
+
+  const until = l.picks_until_turn;
+  let sub;
+  if (l.is_my_turn) sub = 'your pick';
+  else if (until == null) sub = `${l.picks_made} of ${teams * state.status.draft.rounds} picks made`;
+  else if (until === 1) sub = 'you are next';
+  else sub = `${until} picks until your turn · next up ${(l.next_picks || []).slice(0, 3).join(', ')}`;
+  $('clock-sub').textContent = sub;
+
+  $('turn-banner').classList.toggle('hidden', !l.is_my_turn);
+  document.title = l.is_my_turn ? '🟢 YOUR PICK — Draft Board' : `Pick ${l.on_the_clock} — Draft Board`;
+}
+
+function renderRecs() {
+  const box = $('recs');
+  const recs = (state.live && state.live.recommendations) || [];
+  if (!recs.length) {
+    box.innerHTML = '<div class="empty">No suggestions yet.</div>';
+    return;
+  }
+  const auction = state.live.is_auction;
+  box.innerHTML = recs
+    .map((r, i) => {
+      const val = !auction && r.adp != null ? Math.round(r.adp - state.live.on_the_clock) : null;
+      const survival = Math.round((r.survival || 0) * 100);
+      return `
+      <div class="rec ${i === 0 ? 'top' : ''}">
+        <div class="rec-head">
+          <span class="rec-name">${esc(r.name)}</span>
+          <span class="rec-score">${r.vorp > 0 ? '+' : ''}${r.vorp} VORP</span>
+        </div>
+        <div class="rec-meta">
+          ${posTag(r.pos, r.pos_rank)}
+          <span class="muted">${esc(r.team || 'FA')}</span>
+          <span class="tier-chip">T${r.tier}</span>
+          ${r.adp != null && !auction ? `<span class="muted">ADP ${r.adp}${val != null ? ` (${val > 0 ? '+' : ''}${val})` : ''}</span>` : ''}
+          ${auction ? '' : `<span class="muted">${survival}% to last</span>`}
+        </div>
+        ${r.reason ? `<div class="rec-why">${esc(r.reason)}</div>` : ''}
+      </div>`;
+    })
+    .join('');
+}
+
+function renderRoster() {
+  const l = state.live;
+  const counts = l.roster_counts || {};
+  const starters = state.status.league.starters || {};
+  const flex = state.status.league.flex_slots || {};
+
+  const needs = POSITIONS.map((pos) => {
+    const need = starters[pos] || 0;
+    const have = counts[pos] || 0;
+    const cls = need && have < need ? 'open' : have >= need && need ? 'full' : '';
+    return `<span class="need ${cls}">${pos} ${have}${need ? `/${need}` : ''}</span>`;
+  });
+  for (const [slot, n] of Object.entries(flex)) {
+    needs.push(`<span class="need">${esc(slot.replace('_', ' '))} ×${n}</span>`);
+  }
+  $('needs').innerHTML = needs.join('');
+
+  const roster = l.roster || [];
+  $('roster-count').textContent = `${roster.length}/${state.status.league.roster_size}`;
+  $('roster').innerHTML = roster.length
+    ? roster
+        .map((p) => `<li>${posTag(p.pos)}<span class="r-name">${esc(p.name)}</span><span class="muted">${p.pts}</span></li>`)
+        .join('')
+    : '<li class="empty">No picks yet.</li>';
+}
+
+function renderRecent() {
+  const l = state.live;
+  const runs = Object.entries(l.runs || {})
+    .sort((a, b) => b[1] - a[1])
+    .filter(([, n]) => n >= 3)
+    .map(([pos, n]) => `${pos} run (${n}/10)`)
+    .join(' · ');
+  $('runs').textContent = runs;
+
+  const recent = l.recent || [];
+  $('recent').innerHTML = recent.length
+    ? recent
+        .map(
+          (p) => `<li>
+            <span class="r-pick">${l.is_auction && p.amount ? '$' + p.amount : esc(p.pick_no)}</span>
+            ${posTag(p.pos)}
+            <span class="r-name">${esc(p.name)}</span>
+            <span class="r-team">${esc(p.team)}</span>
+          </li>`
+        )
+        .join('')
+    : '<li class="empty">Waiting for the first pick…</li>';
+}
+
+function renderTable() {
+  const body = $('players-body');
+  // "value vs. current pick" is meaningless without a pick order.
+  const auction = state.live && state.live.is_auction;
+  const onClock = state.live && !auction ? state.live.on_the_clock : 0;
+  const query = state.query;
+
+  const rows = [];
+  let shown = 0;
+  let lastTier = null;
+
+  for (const p of state.board) {
+    if (shown >= 200) break;
+    const isDrafted = state.drafted.has(p.id);
+    if (isDrafted && !state.showDrafted) continue;
+    if (state.filter !== 'ALL' && p.pos !== state.filter) continue;
+    if (query && !p.name.toLowerCase().includes(query)) continue;
+    shown++;
+
+    const val = p.adp != null && onClock ? Math.round(p.adp - onClock) : null;
+    const valCls = val == null ? '' : val >= 10 ? 'val-good' : val <= -10 ? 'val-bad' : '';
+    // Only mark tier breaks when looking at a single position; across
+    // positions the tier numbers interleave and the rule is just noise.
+    const isBreak = state.filter !== 'ALL' && lastTier !== null && p.tier !== lastTier;
+    lastTier = p.tier;
+
+    rows.push(`<tr class="${isDrafted ? 'drafted' : ''} ${isBreak ? 'tierbreak' : ''}">
+      <td class="c-tier"><span class="tier-chip">${p.tier}</span></td>
+      <td class="c-name">
+        <span class="p-name">${esc(p.name)}</span>
+        <span class="p-team">${esc(p.team || 'FA')}</span>
+        ${p.injury ? `<span class="p-inj">${esc(p.injury)}</span>` : ''}
+      </td>
+      <td class="c-pos">${posTag(p.pos, p.pos_rank)}</td>
+      <td class="c-num">${p.pts}</td>
+      <td class="c-num">${p.vorp > 0 ? '+' : ''}${p.vorp}</td>
+      <td class="c-num">${p.adp != null ? p.adp : '—'}</td>
+      <td class="c-num ${valCls}">${val == null ? '—' : (val > 0 ? '+' : '') + val}</td>
+      <td class="c-act">
+        <button class="mark" data-id="${esc(p.id)}" data-drafted="${isDrafted ? '1' : '0'}"
+          title="${isDrafted ? 'Undo' : 'Mark drafted'}">${isDrafted ? '↺' : '×'}</button>
+      </td>
+    </tr>`);
+  }
+
+  body.innerHTML = rows.length ? rows.join('') : '<tr><td colspan="8" class="empty">No players match.</td></tr>';
+}
+
+/* ---------------- events ---------------- */
+
+$('find-leagues').onclick = findLeagues;
+$('username').addEventListener('keydown', (e) => { if (e.key === 'Enter') findLeagues(); });
+
+$('connect-id').onclick = () => {
+  const draftId = $('draft-id').value.trim();
+  if (draftId) connect({ draft_id: draftId, username: $('username').value.trim() });
+};
+
+$('posfilter').onclick = (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  state.filter = btn.dataset.pos;
+  [...$('posfilter').children].forEach((b) => b.classList.toggle('active', b === btn));
+  renderTable();
+};
+
+$('search').oninput = (e) => {
+  state.query = e.target.value.trim().toLowerCase();
+  renderTable();
+};
+
+$('show-drafted').onchange = (e) => {
+  state.showDrafted = e.target.checked;
+  renderTable();
+};
+
+// Manual mark-off, so the board stays correct even if Sleeper's API lags.
+$('players-body').onclick = async (e) => {
+  const btn = e.target.closest('button.mark');
+  if (!btn) return;
+  const drafted = btn.dataset.drafted === '1';
+  btn.disabled = true;
+  try {
+    await post('/api/mark', { player_id: btn.dataset.id, drafted: !drafted });
+    await tick();
+  } catch (err) {
+    setSync(false, err.message);
+  }
+};
+
+$('force-sync').onclick = async () => {
+  try {
+    await post('/api/sync', {});
+    await tick();
+  } catch (err) {
+    setSync(false, err.message);
+  }
+};
+
+// Prefill username from ?username= so `--username` carries through.
+const params = new URLSearchParams(location.search);
+if (params.get('username')) {
+  $('username').value = params.get('username');
+  findLeagues();
+}
+
+// If the server was started with --league/--draft it is already connected.
+api('/api/status')
+  .then(async (s) => {
+    if (!s.connected) return;
+    state.status = s;
+    state.board = (await api('/api/board')).players || [];
+    $('setup').classList.add('hidden');
+    $('board').classList.remove('hidden');
+    renderHeader();
+    await tick();
+    startPolling();
+  })
+  .catch(() => {});

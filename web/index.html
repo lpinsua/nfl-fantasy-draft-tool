@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleeper Draft Board</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏈</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ============ SETUP ============ -->
+<section id="setup" class="setup">
+  <div class="setup-card">
+    <h1>Draft Board</h1>
+    <p class="sub">Connect to your Sleeper league. Settings, scoring and your draft slot are detected automatically.</p>
+
+    <label for="username">Sleeper username</label>
+    <div class="row">
+      <input id="username" placeholder="your Sleeper username" autocomplete="off" spellcheck="false">
+      <button id="find-leagues">Find leagues</button>
+    </div>
+
+    <div id="league-list" class="league-list"></div>
+
+    <details class="advanced">
+      <summary>Connect by ID instead</summary>
+      <label for="draft-id">Draft ID (from the Sleeper draft URL)</label>
+      <div class="row">
+        <input id="draft-id" placeholder="e.g. 992119458364928000" autocomplete="off" spellcheck="false">
+        <button id="connect-id">Connect</button>
+      </div>
+    </details>
+
+    <p id="setup-error" class="error"></p>
+    <p id="setup-status" class="status"></p>
+  </div>
+</section>
+
+<!-- ============ BOARD ============ -->
+<section id="board" class="board hidden">
+
+  <header class="topbar">
+    <div class="league-meta">
+      <strong id="league-name">—</strong>
+      <span id="league-scoring" class="pill"></span>
+      <span id="league-size" class="pill"></span>
+      <span id="my-team" class="pill pill-me"></span>
+    </div>
+    <div class="clock">
+      <div id="clock-main" class="clock-main">—</div>
+      <div id="clock-sub" class="clock-sub"></div>
+    </div>
+    <div class="topbar-right">
+      <span id="sync-dot" class="dot"></span>
+      <span id="sync-text" class="sync-text">connecting</span>
+      <button id="force-sync" class="ghost" title="Force a refresh">↻</button>
+    </div>
+  </header>
+
+  <div id="turn-banner" class="turn-banner hidden">YOU'RE ON THE CLOCK</div>
+  <div id="board-notes" class="notes hidden"></div>
+
+  <main class="grid">
+
+    <!-- Best available -->
+    <div class="panel panel-board">
+      <div class="panel-head">
+        <h2>Best available</h2>
+        <div class="filters">
+          <div class="posfilter" id="posfilter">
+            <button data-pos="ALL" class="active">All</button>
+            <button data-pos="QB">QB</button>
+            <button data-pos="RB">RB</button>
+            <button data-pos="WR">WR</button>
+            <button data-pos="TE">TE</button>
+            <button data-pos="K">K</button>
+            <button data-pos="DEF">DEF</button>
+          </div>
+          <input id="search" placeholder="search player…" autocomplete="off" spellcheck="false">
+          <label class="chk"><input type="checkbox" id="show-drafted"> show drafted</label>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="players">
+          <thead>
+            <tr>
+              <th class="c-tier">Tier</th>
+              <th class="c-name">Player</th>
+              <th class="c-pos">Pos</th>
+              <th class="c-num">Proj</th>
+              <th class="c-num">VORP</th>
+              <th class="c-num">ADP</th>
+              <th class="c-num" title="ADP minus current pick. Positive = falling to you.">Val</th>
+              <th class="c-act"></th>
+            </tr>
+          </thead>
+          <tbody id="players-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right rail -->
+    <div class="rail">
+
+      <div class="panel">
+        <div class="panel-head"><h2>Take now</h2></div>
+        <div id="recs" class="recs"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Your roster</h2>
+          <span id="roster-count" class="muted"></span>
+        </div>
+        <div id="needs" class="needs"></div>
+        <ul id="roster" class="roster"></ul>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Recent picks</h2>
+          <span id="runs" class="muted"></span>
+        </div>
+        <ul id="recent" class="recent"></ul>
+      </div>
+
+    </div>
+  </main>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
