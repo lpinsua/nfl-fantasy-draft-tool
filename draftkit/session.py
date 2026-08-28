@@ -21,9 +21,11 @@ POLL_SECONDS = 3.0
 class Session:
     """One connected league + draft, refreshed by a background poller."""
 
-    def __init__(self, client: SleeperClient, csv_path: Path | None = None):
+    def __init__(self, client: SleeperClient, csv_path: Path | None = None,
+                 favorite_team: str = ""):
         self.client = client
         self.csv_path = csv_path
+        self.favorite_team = (favorite_team or "").upper()
         self.lock = threading.RLock()
 
         self.league: LeagueSettings | None = None
@@ -206,6 +208,7 @@ class Session:
                     "my_slot": state.my_slot,
                     "team_names": {str(k): v for k, v in self.team_names.items()},
                 },
+                "favorite_team": self.favorite_team,
                 "board_source": self.board.source if self.board else None,
                 "notes": self.board.notes if self.board else [],
             }

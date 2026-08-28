@@ -18,6 +18,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
+from draftkit import config as config_mod
 from draftkit import preflight as preflight_mod
 from draftkit.api import SleeperClient
 from draftkit.demo import DemoClient
@@ -41,6 +42,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--league", default="", help="league id, to skip the picker")
     parser.add_argument("--draft", default="", help="draft id, to skip the picker")
     parser.add_argument("--rankings", default="", help="optional CSV of custom rankings")
+    parser.add_argument(
+        "--team", default="",
+        help="your favourite NFL team, highlighted on the board (e.g. MIA)",
+    )
+    parser.add_argument(
+        "--save", action="store_true",
+        help=f"remember these settings in {config_mod.CONFIG_NAME} and reuse them next time",
+    )
     parser.add_argument(
         "--preflight", action="store_true",
         help="check Sleeper connectivity and your league, print what was detected, then exit",
@@ -71,6 +80,27 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
+    # Saved defaults fill in anything not given on the command line, so the
+    # everyday case is just `python3 draft.py`.
+    saved = config_mod.load()
+    args.username = args.username or saved.get("username", "")
+    args.league = args.league or saved.get("league_id", "")
+    args.draft = args.draft or saved.get("draft_id", "")
+    args.rankings = args.rankings or saved.get("rankings", "")
+    args.team = (args.team or saved.get("favorite_team", "")).upper()
+
+    if args.save:
+        path = config_mod.save(
+            {
+                "username": args.username,
+                "league_id": args.league,
+                "draft_id": args.draft,
+                "favorite_team": args.team,
+                "rankings": args.rankings,
+            }
+        )
+        print(f"saved defaults to {path}")
+
     csv_path = Path(args.rankings).expanduser() if args.rankings else None
     if csv_path and not csv_path.exists():
         print(f"error: rankings file not found: {csv_path}", file=sys.stderr)
@@ -95,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         client = SleeperClient()
 
-    session = Session(client, csv_path=csv_path)
+    session = Session(client, csv_path=csv_path, favorite_team=args.team)
 
     if args.demo:
         logging.info("demo mode — synthetic league, no network calls")

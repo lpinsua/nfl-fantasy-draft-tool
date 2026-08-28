@@ -3,6 +3,35 @@
 const $ = (id) => document.getElementById(id);
 const POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'];
 
+// Primary colour and a nickname per NFL team, used to brand your team's
+// players on the board.
+const TEAMS = {
+  ARI: ['#97233F', 'Cardinals', '🐦'], ATL: ['#A71930', 'Falcons', '🦅'],
+  BAL: ['#241773', 'Ravens', '🐦‍⬛'],  BUF: ['#00338D', 'Bills', '🦬'],
+  CAR: ['#0085CA', 'Panthers', '🐆'], CHI: ['#0B162A', 'Bears', '🐻'],
+  CIN: ['#FB4F14', 'Bengals', '🐅'],  CLE: ['#FF3C00', 'Browns', '🐕'],
+  DAL: ['#041E42', 'Cowboys', '⭐'],  DEN: ['#FB4F14', 'Broncos', '🐴'],
+  DET: ['#0076B6', 'Lions', '🦁'],    GB:  ['#FFB612', 'Packers', '🧀'],
+  HOU: ['#03202F', 'Texans', '🐂'],   IND: ['#002C5F', 'Colts', '🐎'],
+  JAX: ['#00839C', 'Jaguars', '🐆'],  KC:  ['#E31837', 'Chiefs', '🏹'],
+  LAC: ['#0080C6', 'Chargers', '⚡'], LAR: ['#003594', 'Rams', '🐏'],
+  LV:  ['#A5ACAF', 'Raiders', '🏴‍☠️'], MIA: ['#008E97', 'Dolphins', '🐬'],
+  MIN: ['#4F2683', 'Vikings', '🛡️'],  NE:  ['#0C2340', 'Patriots', '🇺🇸'],
+  NO:  ['#D3BC8D', 'Saints', '⚜️'],   NYG: ['#0B2265', 'Giants', '🗽'],
+  NYJ: ['#125740', 'Jets', '✈️'],     PHI: ['#00814A', 'Eagles', '🦅'],
+  PIT: ['#FFB612', 'Steelers', '🔩'], SEA: ['#69BE28', 'Seahawks', '🦅'],
+  SF:  ['#AA0000', '49ers', '⛏️'],    TB:  ['#D50A0A', 'Buccaneers', '🏴‍☠️'],
+  TEN: ['#4B92DB', 'Titans', '⚔️'],   WAS: ['#5A1414', 'Commanders', '🪶'],
+};
+
+/** Turn #rrggbb into an rgba() string, for the row tint. */
+function tint(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return `rgba(88,166,255,${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 const state = {
   board: [],          // full ranked player list, fetched once
   drafted: new Set(),
@@ -12,6 +41,8 @@ const state = {
   filter: 'ALL',
   query: '',
   showDrafted: false,
+  favTeam: '',
+  favOnly: false,
   timer: null,
   tick: null,
   // Offset between this browser's clock and the server's, so the countdown
@@ -209,6 +240,8 @@ function renderHeader() {
   $('league-scoring').textContent = s.league.scoring_label;
   $('league-size').textContent = `${s.league.teams} teams · ${s.draft.rounds} rd · ${s.draft.type}`;
 
+  applyFavoriteTeam(s.favorite_team);
+
   const slot = s.draft.my_slot;
   $('my-team').textContent = s.draft.is_auction
     ? (s.draft.budget ? `Auction · $${s.draft.budget}` : 'Auction')
@@ -232,6 +265,24 @@ function renderHeader() {
   const box = $('board-notes');
   box.innerHTML = notes.map(esc).join(' · ');
   box.classList.toggle('hidden', notes.length === 0);
+}
+
+/** Brand the board with your team's real colours and reveal its filter. */
+function applyFavoriteTeam(code) {
+  const team = (code || '').toUpperCase();
+  state.favTeam = TEAMS[team] ? team : '';
+  const label = $('fav-chk-label');
+  if (!state.favTeam) {
+    label.classList.add('hidden');
+    return;
+  }
+  const [color, nickname, emoji] = TEAMS[state.favTeam];
+  const root = document.documentElement;
+  root.style.setProperty('--fav', color);
+  root.style.setProperty('--fav-tint', tint(color, 0.13));
+  $('fav-chk-text').textContent = `${emoji} ${nickname} only`;
+  label.classList.remove('hidden');
+  label.title = `Show only available ${nickname}`;
 }
 
 function renderClock() {
@@ -278,10 +329,11 @@ function renderRecs() {
     .map((r, i) => {
       const val = !auction && r.adp != null ? Math.round(r.adp - state.live.on_the_clock) : null;
       const survival = Math.round((r.survival || 0) * 100);
+      const isFav = state.favTeam && r.team === state.favTeam;
       return `
-      <div class="rec ${i === 0 ? 'top' : ''}">
+      <div class="rec ${i === 0 ? 'top' : ''} ${isFav ? 'fav-rec' : ''}">
         <div class="rec-head">
-          <span class="rec-name">${esc(r.name)}</span>
+          <span class="rec-name">${esc(r.name)}${isFav ? ` <span class="fav-mark">${TEAMS[state.favTeam][2]}</span>` : ''}</span>
           <span class="rec-score">${r.vorp > 0 ? '+' : ''}${r.vorp} VORP</span>
         </div>
         <div class="rec-meta">
@@ -373,6 +425,7 @@ function renderTable() {
     const isDrafted = state.drafted.has(p.id);
     if (isDrafted && !state.showDrafted) continue;
     if (state.filter !== 'ALL' && p.pos !== state.filter) continue;
+    if (state.favOnly && p.team !== state.favTeam) continue;
     if (query && !p.name.toLowerCase().includes(query)) continue;
     shown++;
 
@@ -383,11 +436,13 @@ function renderTable() {
     const isBreak = state.filter !== 'ALL' && lastTier !== null && p.tier !== lastTier;
     lastTier = p.tier;
 
-    rows.push(`<tr class="${isDrafted ? 'drafted' : ''} ${isBreak ? 'tierbreak' : ''}">
+    const isFav = state.favTeam && p.team === state.favTeam;
+    rows.push(`<tr class="${isDrafted ? 'drafted' : ''} ${isBreak ? 'tierbreak' : ''} ${isFav ? 'fav' : ''}">
       <td class="c-tier"><span class="tier-chip">${p.tier}</span></td>
       <td class="c-name">
         <span class="p-name">${esc(p.name)}</span>
         <span class="p-team">${esc(p.team || 'FA')}</span>
+        ${isFav ? `<span class="fav-mark">${TEAMS[state.favTeam][2]}</span>` : ''}
         ${p.injury ? `<span class="p-inj">${esc(p.injury)}</span>` : ''}
       </td>
       <td class="c-pos">${posTag(p.pos, p.pos_rank)}</td>
@@ -428,6 +483,42 @@ $('search').oninput = (e) => {
 $('show-drafted').onchange = (e) => {
   state.showDrafted = e.target.checked;
   renderTable();
+};
+
+$('fav-only').onchange = (e) => {
+  state.favOnly = e.target.checked;
+  renderTable();
+};
+
+// ---- theme ----
+// Start from the saved choice, else follow the OS. Storage can throw in a
+// private window, so every access is guarded.
+function readStoredTheme() {
+  try {
+    return localStorage.getItem('draftkit-theme');
+  } catch {
+    return null;
+  }
+}
+
+function applyTheme(mode) {
+  document.documentElement.setAttribute('data-theme', mode);
+  $('theme-btn').textContent = mode === 'light' ? '☀️' : '🌙';
+  $('theme-btn').title = mode === 'light' ? 'Switch to dark' : 'Switch to light';
+  try {
+    localStorage.setItem('draftkit-theme', mode);
+  } catch {
+    /* not persisting is fine; the toggle still works for this session */
+  }
+}
+
+const prefersLight =
+  window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+applyTheme(readStoredTheme() || (prefersLight ? 'light' : 'dark'));
+
+$('theme-btn').onclick = () => {
+  const now = document.documentElement.getAttribute('data-theme');
+  applyTheme(now === 'light' ? 'dark' : 'light');
 };
 
 // Manual mark-off, so the board stays correct even if Sleeper's API lags.

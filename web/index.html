@@ -56,6 +56,7 @@
       <span id="sync-dot" class="dot"></span>
       <span id="sync-text" class="sync-text">connecting</span>
       <button id="force-sync" class="ghost" title="Force a refresh from Sleeper">↻</button>
+      <button id="theme-btn" class="ghost" title="Switch between dark and light">🌙</button>
       <button id="help-btn" class="ghost" title="What do these numbers mean?">?</button>
     </div>
   </header>
@@ -156,6 +157,9 @@
             <button data-pos="DEF">DEF</button>
           </div>
           <input id="search" placeholder="search player…" autocomplete="off" spellcheck="false">
+          <label class="chk fav-chk hidden" id="fav-chk-label">
+            <input type="checkbox" id="fav-only"> <span id="fav-chk-text">team only</span>
+          </label>
           <label class="chk"><input type="checkbox" id="show-drafted"> show drafted</label>
         </div>
       </div>

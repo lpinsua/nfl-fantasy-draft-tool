@@ -103,6 +103,8 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 --username NAME        your Sleeper username
 --league ID            skip the picker, connect straight to a league
 --draft ID             skip the picker, connect straight to a draft
+--team ABBR            your team (e.g. MIA) — highlighted in its own colours
+--save                 remember these settings, so next time needs no flags
 --rankings FILE.csv    layer your own rankings over Sleeper's projections
 --demo                 synthetic league, no network
 --demo-type TYPE       snake | linear | auction   (with --demo)
@@ -112,6 +114,28 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 --no-browser           don't open a browser
 --verbose              debug logging
 ```
+
+### Remembering your league
+
+Run once with `--save` and every later run needs no flags at all:
+
+```bash
+python3 draft.py --username you --league 123456789 --team MIA --save
+python3 draft.py            # from now on, this is the whole command
+```
+
+Settings land in `draft.config.json`. Nothing there is a credential — Sleeper's
+API takes no password, token or key, and a username and league id are public
+read-only identifiers. Don't add anything genuinely secret to that file.
+
+### Theme and your team
+
+- **🌙 / ☀️** in the top right toggles dark and light. It follows your OS on
+  first load, then remembers your choice.
+- `--team MIA` paints your team's players in their real colours, marks them with
+  the team emoji, and adds a **🐬 Dolphins only** filter beside *show drafted* —
+  handy for spotting which of your guys are still on the board.
+- **?** (button or keypress) opens a glossary of every column and term.
 
 ### Using your own rankings
 
@@ -154,7 +178,7 @@ draftkit/
   preflight.py        the pre-draft self check
   demo.py             synthetic league (shared with the tests)
 web/                  index.html / app.js / style.css
-tests/                64 offline tests
+tests/                90 offline tests
 ```
 
 Sleeper endpoints used, all public and unauthenticated:
@@ -173,7 +197,7 @@ which is well inside their rate limits.
 python3 -m unittest discover -s tests
 ```
 
-64 tests, no network required. They cover snake/linear/third-round-reversal pick
+90 tests, no network required. They cover snake/linear/third-round-reversal pick
 math, flex and superflex replacement levels, league-exact scoring, tier
 assignment, availability, the auction degradation path, and a full HTTP
 end-to-end run against a stubbed Sleeper.

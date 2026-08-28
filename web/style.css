@@ -10,7 +10,32 @@
   --warn: #d29922;
   --bad: #f85149;
   --qb: #ff6b8b; --rb: #4ade80; --wr: #60a5fa; --te: #fbbf24; --k: #a78bfa; --def: #94a3b8;
+  --chip-a: .16;
+  /* Favourite-team accent, set from JS to that team's real colours. */
+  --fav: #58a6ff;
+  --fav-tint: rgba(88, 166, 255, .10);
 }
+
+/* Light theme. Set explicitly on the root so the toggle wins over the
+   system preference in both directions. */
+:root[data-theme="light"] {
+  --bg: #f2f4f7;
+  --panel: #ffffff;
+  --panel-2: #f0f3f6;
+  --line: #d5dbe2;
+  --text: #14181d;
+  --muted: #5a6572;
+  --accent: #0969da;
+  --good: #1a7f37;
+  --warn: #9a6700;
+  --bad: #cf222e;
+  --qb: #c2185b; --rb: #1a7f37; --wr: #0969da; --te: #9a6700; --k: #6d28d9; --def: #475569;
+  --chip-a: .13;
+}
+:root[data-theme="light"] tbody tr:hover { background: #eef2f6; }
+:root[data-theme="light"] .turn-banner { color: #06240f; }
+:root[data-theme="light"] .overlay { background: rgba(20, 24, 29, .42); }
+:root[data-theme="light"] button.ghost:hover { background: var(--panel-2); }
 
 * { box-sizing: border-box; }
 
@@ -248,12 +273,26 @@ td.c-num { text-align: right; font-variant-numeric: tabular-nums; }
 .p-inj { color: var(--bad); font-size: 10.5px; font-weight: 700; margin-left: 5px; }
 
 .pos { font-size: 11px; font-weight: 800; padding: 2px 6px; border-radius: 5px; letter-spacing: .03em; }
-.pos-QB { background: rgba(255,107,139,.16); color: var(--qb); }
-.pos-RB { background: rgba(74,222,128,.16); color: var(--rb); }
-.pos-WR { background: rgba(96,165,250,.16); color: var(--wr); }
-.pos-TE { background: rgba(251,191,36,.16); color: var(--te); }
-.pos-K   { background: rgba(167,139,250,.16); color: var(--k); }
-.pos-DEF { background: rgba(148,163,184,.16); color: var(--def); }
+.pos-QB { background: color-mix(in srgb, var(--qb) 16%, transparent); color: var(--qb); }
+.pos-RB { background: color-mix(in srgb, var(--rb) 16%, transparent); color: var(--rb); }
+.pos-WR { background: color-mix(in srgb, var(--wr) 16%, transparent); color: var(--wr); }
+.pos-TE { background: color-mix(in srgb, var(--te) 16%, transparent); color: var(--te); }
+.pos-K   { background: color-mix(in srgb, var(--k) 16%, transparent); color: var(--k); }
+.pos-DEF { background: color-mix(in srgb, var(--def) 16%, transparent); color: var(--def); }
+@supports not (background: color-mix(in srgb, red 10%, transparent)) {
+  .pos-QB { background: rgba(255,107,139,.16); } .pos-RB { background: rgba(74,222,128,.16); }
+  .pos-WR { background: rgba(96,165,250,.16); } .pos-TE { background: rgba(251,191,36,.16); }
+  .pos-K  { background: rgba(167,139,250,.16); } .pos-DEF { background: rgba(148,163,184,.16); }
+}
+
+/* ---------- favourite team ---------- */
+tbody tr.fav { background: var(--fav-tint); box-shadow: inset 3px 0 0 var(--fav); }
+tbody tr.fav:hover { background: var(--fav-tint); filter: brightness(1.08); }
+tbody tr.fav .p-team { color: var(--fav); font-weight: 700; }
+.fav-mark { margin-left: 5px; font-size: 11px; }
+.rec.fav-rec { border-left-color: var(--fav); }
+.chk.fav-chk { color: var(--fav); font-weight: 600; }
+.pill-fav { background: var(--fav-tint); color: var(--fav); border-color: var(--fav); }
 .posr { color: var(--muted); font-size: 11px; margin-left: 3px; }
 
 .val-good { color: var(--good); }
