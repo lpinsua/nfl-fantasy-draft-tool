@@ -41,6 +41,8 @@ const state = {
   filter: 'ALL',
   query: '',
   showDrafted: false,
+  sortKey: 'vorp',
+  sortDir: -1,       // -1 = descending
   favTeam: '',
   favOnly: false,
   timer: null,
@@ -399,6 +401,52 @@ function renderRecent() {
     : '<li class="empty">Waiting for the first pick…</li>';
 }
 
+// The direction each column is most useful in on first click: best players
+// first for value columns, earliest picks first for ADP, biggest bargains
+// first for Val.
+const SORT_DIR = { tier: 1, name: 1, pts: -1, vorp: -1, adp: 1, val: -1 };
+
+function sortValue(p, key, onClock) {
+  switch (key) {
+    case 'tier': return p.tier;
+    case 'name': return p.name.toLowerCase();
+    case 'pts': return p.pts;
+    case 'adp': return p.adp;
+    case 'val': return p.adp == null ? null : p.adp - onClock;
+    default: return p.vorp;
+  }
+}
+
+/** Sort the board, always keeping players with no value for that column last. */
+function sortedBoard(onClock) {
+  const { sortKey, sortDir } = state;
+  return state.board.slice().sort((a, b) => {
+    const av = sortValue(a, sortKey, onClock);
+    const bv = sortValue(b, sortKey, onClock);
+    const aNull = av === null || av === undefined;
+    const bNull = bv === null || bv === undefined;
+    if (aNull || bNull) return aNull && bNull ? 0 : aNull ? 1 : -1;
+    if (av < bv) return -sortDir;
+    if (av > bv) return sortDir;
+    return b.vorp - a.vorp;   // stable, meaningful tiebreak
+  });
+}
+
+function renderSortHeaders() {
+  document.querySelectorAll('th.sortable').forEach((th) => {
+    const active = th.dataset.sort === state.sortKey;
+    th.classList.toggle('active', active);
+    let arrow = th.querySelector('.arrow');
+    if (!arrow) {
+      arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      th.appendChild(arrow);
+    }
+    const dir = active ? state.sortDir : SORT_DIR[th.dataset.sort];
+    arrow.textContent = dir === 1 ? '▲' : '▼';
+  });
+}
+
 /** The × / ↺ cell. Only marks you made by hand can be undone here. */
 function actionCell(p, isDrafted) {
   const manual = state.manual && state.manual.has(p.id);
@@ -419,8 +467,11 @@ function renderTable() {
   const rows = [];
   let shown = 0;
   let lastTier = null;
+  // Tier dividers only make sense while the board is ordered by value.
+  const valueOrdered = state.sortKey === 'vorp' || state.sortKey === 'pts';
 
-  for (const p of state.board) {
+  renderSortHeaders();
+  for (const p of sortedBoard(state.live ? state.live.on_the_clock : 0)) {
     if (shown >= 200) break;
     const isDrafted = state.drafted.has(p.id);
     if (isDrafted && !state.showDrafted) continue;
@@ -433,7 +484,8 @@ function renderTable() {
     const valCls = val == null ? '' : val >= 10 ? 'val-good' : val <= -10 ? 'val-bad' : '';
     // Only mark tier breaks when looking at a single position; across
     // positions the tier numbers interleave and the rule is just noise.
-    const isBreak = state.filter !== 'ALL' && lastTier !== null && p.tier !== lastTier;
+    const isBreak =
+      valueOrdered && state.filter !== 'ALL' && lastTier !== null && p.tier !== lastTier;
     lastTier = p.tier;
 
     const isFav = state.favTeam && p.team === state.favTeam;
@@ -482,6 +534,16 @@ $('search').oninput = (e) => {
 
 $('show-drafted').onchange = (e) => {
   state.showDrafted = e.target.checked;
+  renderTable();
+};
+
+// Click a column to sort; click the same one again to flip direction.
+document.querySelector('#players thead').onclick = (e) => {
+  const th = e.target.closest('th.sortable');
+  if (!th) return;
+  const key = th.dataset.sort;
+  state.sortDir = state.sortKey === key ? -state.sortDir : (SORT_DIR[key] || -1);
+  state.sortKey = key;
   renderTable();
 };
 

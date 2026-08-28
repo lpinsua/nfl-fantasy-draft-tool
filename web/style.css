@@ -141,6 +141,13 @@ button.ghost { background: transparent; color: var(--muted); border: 1px solid v
 
 th.help { cursor: help; text-decoration: underline dotted var(--line); text-underline-offset: 3px; }
 
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--text); }
+th.sortable .arrow { opacity: 0; margin-left: 3px; font-size: 9px; }
+th.sortable:hover .arrow { opacity: .45; }
+th.sortable.active { color: var(--accent); }
+th.sortable.active .arrow { opacity: 1; }
+
 /* Undo affordance: a manual mark hides the player, so there has to be a way
    back that does not depend on finding him again. */
 .undo-bar {
