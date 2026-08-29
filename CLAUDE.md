@@ -23,6 +23,20 @@ python3 draft.py                  # uses the saved defaults
 python3 draft.py --preflight      # same, but check and exit
 ```
 
+## Providers
+
+Sleeper and ESPN. `EspnClient` duck-types `SleeperClient` and returns
+Sleeper-shaped dicts, so the board, value model, poller, web UI and review are
+provider-agnostic — the same trick `DemoClient` uses. To add another site,
+write another adapter; do not touch the engine.
+
+**ESPN specifics.** Private leagues need the `espn_s2`/`SWID` cookies, which are
+real credentials and live in `~/.config/draftkit/secrets.json`, never here.
+ESPN pre-applies league scoring to projections (`appliedTotal`), so the adapter
+sets `pts_league` rather than trying to replicate ESPN's stat-id scoring table.
+ESPN is blocked from the sandbox exactly like Sleeper, so `tests/espn_fixtures.py`
+carries hand-written payloads shaped like the real v3 responses.
+
 ## What this is
 
 A zero-dependency draft assistant for Sleeper: stdlib Python plus vanilla JS,

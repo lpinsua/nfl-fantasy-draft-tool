@@ -19,10 +19,12 @@ import webbrowser
 from pathlib import Path
 
 from draftkit import config as config_mod
+from draftkit import credentials as creds_mod
 from draftkit import preflight as preflight_mod
 from draftkit import review as review_mod
 from draftkit.api import SleeperClient
 from draftkit.demo import DemoClient
+from draftkit.espn import EspnClient
 from draftkit.server import serve
 from draftkit.session import Session
 
@@ -50,6 +52,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--save", action="store_true",
         help=f"remember these settings in {config_mod.CONFIG_NAME} and reuse them next time",
+    )
+    parser.add_argument(
+        "--espn", action="store_true",
+        help="use ESPN instead of Sleeper (needs --league and --season)",
+    )
+    parser.add_argument(
+        "--season", default="",
+        help="season year, for ESPN (e.g. 2026)",
+    )
+    parser.add_argument(
+        "--espn-login", action="store_true",
+        help="store your ESPN cookies for private leagues, then exit",
     )
     parser.add_argument(
         "--review", action="store_true",
@@ -93,18 +107,26 @@ def main(argv: list[str] | None = None) -> int:
     args.draft = args.draft or saved.get("draft_id", "")
     args.rankings = args.rankings or saved.get("rankings", "")
     args.team = (args.team or saved.get("favorite_team", "")).upper()
+    args.season = args.season or saved.get("season", "")
+    if args.espn:
+        # ESPN has its own league id, kept separate from the Sleeper one.
+        args.league = args.league or saved.get("espn_league_id", "")
 
     if args.save:
         path = config_mod.save(
             {
                 "username": args.username,
-                "league_id": args.league,
                 "draft_id": args.draft,
                 "favorite_team": args.team,
                 "rankings": args.rankings,
+                "season": args.season,
+                **({"espn_league_id": args.league} if args.espn else {"league_id": args.league}),
             }
         )
         print(f"saved defaults to {path}")
+
+    if args.espn_login:
+        return _espn_login()
 
     csv_path = Path(args.rankings).expanduser() if args.rankings else None
     if csv_path and not csv_path.exists():
@@ -116,6 +138,15 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.username or args.league or args.draft):
             print("error: --preflight needs --username (or --league / --draft)", file=sys.stderr)
             return 2
+        if args.espn:
+            problem = _espn_ready(args)
+            if problem:
+                print(problem, file=sys.stderr)
+                return 2
+            return preflight_mod.run(
+                EspnClient(args.league, args.season), username=args.username,
+                league_id=args.league, provider="ESPN",
+            )
         return preflight_mod.run(
             SleeperClient(), username=args.username, league_id=args.league, draft_id=args.draft
         )
@@ -125,7 +156,14 @@ def main(argv: list[str] | None = None) -> int:
         if not (args.league or args.draft):
             print("error: --review needs --league (or --draft)", file=sys.stderr)
             return 2
-        client = SleeperClient()
+        if args.espn:
+            problem = _espn_ready(args)
+            if problem:
+                print(problem, file=sys.stderr)
+                return 2
+            client = EspnClient(args.league, args.season)
+        else:
+            client = SleeperClient()
         session = Session(client)
         try:
             session.connect(args.league, args.draft or None, args.username or None)
@@ -143,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
             seconds_per_pick=args.demo_speed,
             draft_type=args.demo_type,
         )
+    elif args.espn:
+        problem = _espn_ready(args)
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
+        client = EspnClient(args.league, args.season)
     else:
         client = SleeperClient()
 
@@ -188,6 +232,43 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         session.stop()
         httpd.server_close()
+    return 0
+
+
+def _espn_ready(args) -> str:
+    """Empty string when we have what ESPN needs, else what is missing."""
+    if not args.league:
+        return ("error: ESPN needs a league id.  It is the number in your league URL:\n"
+                "  https://fantasy.espn.com/football/league?leagueId=123456\n"
+                "  python3 draft.py --espn --league 123456 --season 2026")
+    if not args.season:
+        return "error: ESPN needs --season (e.g. --season 2026)"
+    if not creds_mod.espn_cookies():
+        return ("error: no ESPN credentials stored, which a private league needs.\n"
+                "  python3 draft.py --espn-login\n"
+                "(If your league is public, this is a bug — tell me and I will "
+                "make the check conditional.)")
+    return ""
+
+
+def _espn_login() -> int:
+    """Prompt for the two ESPN cookies and store them outside the repo."""
+    import getpass
+
+    print(creds_mod.HOW_TO_GET_COOKIES)
+    print()
+    try:
+        s2 = getpass.getpass("espn_s2 (input hidden): ").strip()
+        swid = getpass.getpass("SWID    (input hidden): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\ncancelled.")
+        return 1
+    if not (s2 and swid):
+        print("error: both values are required.", file=sys.stderr)
+        return 2
+    path = creds_mod.save({"espn_s2": s2, "espn_swid": creds_mod.normalise_swid(swid)})
+    print(f"\nsaved to {path} (readable only by you, and outside this repository).")
+    print("check it works:  python3 draft.py --espn --preflight --league <id> --season <year>")
     return 0
 
 

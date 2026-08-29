@@ -1,6 +1,6 @@
-# Sleeper draft board
+# Fantasy draft board — Sleeper and ESPN
 
-A live draft assistant for Sleeper fantasy football. It connects to your league,
+A live draft assistant for Sleeper and ESPN fantasy football. It connects to your league,
 detects your settings, tracks picks as they happen, and tells you who to take —
 with a reason.
 
@@ -99,6 +99,9 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 ## Options
 
 ```
+--espn                 use ESPN instead of Sleeper (with --league and --season)
+--espn-login           store ESPN cookies for a private league, then exit
+--season YEAR          season year, required for ESPN
 --preflight            check connectivity and your league, print findings, exit
 --review               grade the finished draft against the rest of the league
 --username NAME        your Sleeper username
@@ -150,6 +153,37 @@ Two panels, deliberately answering different questions:
   It tells you an elite tight end is sitting there at a 26-pick discount, and
   also that you already start one. The call is yours.
 
+### ESPN leagues
+
+Everything above works for ESPN too — same board, same VORP, same review. The
+ESPN client just presents ESPN as if it were Sleeper, so nothing downstream
+knows the difference.
+
+```bash
+python3 draft.py --espn-login                                   # once, private leagues only
+python3 draft.py --espn --preflight --league 123456 --season 2026
+python3 draft.py --espn --league 123456 --season 2026 --save     # then --espn alone
+```
+
+Your league id is the number in the league URL:
+`fantasy.espn.com/football/league?leagueId=`**`123456`**
+
+**Private leagues need credentials — real ones.** ESPN authenticates with the
+`espn_s2` and `SWID` cookies from a logged-in browser, and those grant access to
+your ESPN account, not just one league. `--espn-login` walks you through finding
+them and stores them in `~/.config/draftkit/secrets.json`, readable only by you
+and **never** in this repository, which is public. Logging out of ESPN
+everywhere invalidates them.
+
+Two differences worth knowing:
+
+- **Scoring is exact without any rule mapping.** ESPN returns projections it has
+  already scored under your league's own settings, so this does not try to
+  reimplement ESPN's scoring from its numeric stat ids.
+- **ADP is a draft rank, not an average pick.** ESPN publishes ranks rather than
+  average draft position. Same ordering, which is all the model uses it for, but
+  the "fell N picks past ADP" figures are looser than on Sleeper.
+
 ### Using your own rankings
 
 Any CSV with a name column works, including a FantasyPros export. Recognised value
@@ -188,6 +222,8 @@ draftkit/
   draftstate.py       snake math, live picks, availability, recommendations
   session.py          connected league + background poller
   server.py           stdlib HTTP server + JSON API
+  espn.py             ESPN, presented as if it were Sleeper
+  credentials.py      ESPN cookies, stored outside the repo
   preflight.py        the pre-draft self check
   demo.py             synthetic league (shared with the tests)
 web/                  index.html / app.js / style.css

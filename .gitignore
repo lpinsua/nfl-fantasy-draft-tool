@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Credentials never belong in this repo (it is public). ESPN cookies live in
+# ~/.config/draftkit/secrets.json instead; these are belt-and-braces.
+secrets.json
+*secret*
+*cookie*
+.env

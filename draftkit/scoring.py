@@ -17,7 +17,7 @@ NON_STAT_KEYS = frozenset(
         "adp_dynasty", "adp_dynasty_2qb", "adp_dynasty_half_ppr", "adp_dynasty_ppr",
         "adp_dynasty_std", "adp_half_ppr", "adp_ppr", "adp_rookie", "adp_std",
         "adp_2qb", "adp_idp", "pos_adp_dynasty_half_ppr",
-        "pts_half_ppr", "pts_ppr", "pts_std", "pts_idp",
+        "pts_half_ppr", "pts_ppr", "pts_std", "pts_idp", "pts_league",
         "gp", "gms_active", "gs",
     }
 )
@@ -40,10 +40,18 @@ def score_stats(stats: dict[str, Any], scoring: dict[str, Any]) -> float:
 
 
 def fallback_points(stats: dict[str, Any], ppr: float) -> float | None:
-    """Use Sleeper's own precomputed totals when raw stats are unusable.
+    """Use a precomputed total when raw stats are unusable.
 
-    Picks the precomputed column closest to the league's reception value.
+    ``pts_league`` wins outright: a provider that has already applied the
+    league's own rules (ESPN does this) beats any generic column. Otherwise
+    pick the precomputed column closest to the league's reception value.
     """
+    supplied = stats.get("pts_league")
+    if supplied is not None:
+        try:
+            return float(supplied)
+        except (TypeError, ValueError):
+            pass
     options = (
         (0.0, "pts_std"),
         (0.5, "pts_half_ppr"),

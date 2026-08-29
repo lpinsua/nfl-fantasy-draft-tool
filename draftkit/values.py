@@ -153,7 +153,12 @@ def build_board(
         points: float | None = None
         source = "adp"
 
-        if stats and scoring_mod.has_scorable_stats(stats, league.scoring):
+        if stats.get("pts_league") is not None:
+            # The provider already scored this under the league's own rules.
+            points = scoring_mod.fallback_points(stats, league.ppr)
+            source = "league-scoring"
+            scored_with_stats += 1
+        elif stats and scoring_mod.has_scorable_stats(stats, league.scoring):
             points = scoring_mod.score_stats(stats, league.scoring)
             source = "league-scoring"
             scored_with_stats += 1

@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .api import API, DATA_API, SleeperClient, SleeperError
+from .api import DATA_API, SleeperClient, SleeperError
 from .draftstate import parse_draft
 from .league import parse_league
 from .values import build_board
@@ -46,10 +46,11 @@ def run(
     username: str = "",
     league_id: str = "",
     draft_id: str = "",
+    provider: str = "Sleeper",
 ) -> int:
     """Returns a process exit code: 0 = good to go, 1 = something is broken."""
     report = Report()
-    print("\nSleeper draft board — preflight\n" + "=" * 62)
+    print(f"\n{provider} draft board — preflight\n" + "=" * 62)
 
     # 1. Can we reach Sleeper at all?
     season = ""
@@ -58,13 +59,13 @@ def run(
         state = client.state()
         season = str(state.get("season") or "")
         report.ok(
-            "Sleeper API reachable",
-            f"{API} · season {season} · week {state.get('week')} · {(time.time()-started)*1000:.0f}ms",
+            f"{provider} API reachable",
+            f"season {season} · week {state.get('week')} · {(time.time()-started)*1000:.0f}ms",
         )
     except SleeperError as exc:
-        report.fail("Sleeper API unreachable", str(exc))
+        report.fail(f"{provider} API unreachable", str(exc))
         print(
-            "\nNothing else can be checked without network access to Sleeper.\n"
+            f"\nNothing else can be checked without network access to {provider}.\n"
             "Check your connection, VPN, or corporate proxy and try again.\n"
         )
         return 1
@@ -84,7 +85,7 @@ def run(
             my_user_id = str(user.get("user_id"))
             report.ok("Username resolved", f"{username} → user_id {my_user_id}")
         else:
-            report.fail("No such Sleeper user", f"'{username}' — check spelling (it is not your email)")
+            report.fail(f"No such {provider} user", f"'{username}' — check spelling (it is not your email)")
 
     if draft_id and not league_id:
         raw_draft = client.draft(draft_id)
@@ -125,8 +126,6 @@ def run(
     print(f"         · starters   {_fmt_slots(league)}")
     print(f"         · bench      {league.bench}  (roster size {league.roster_size})")
 
-    if not league.scoring:
-        report.fail("No scoring settings", "cannot score players on league rules")
     if not league.roster_positions:
         report.fail("No roster positions", "cannot compute replacement levels")
 
@@ -186,10 +185,8 @@ def run(
 
     projections = client.projections(league.season or season)
     if projections:
-        report.ok(
-            "Projections loaded",
-            f"{len(projections)} rows from {DATA_API}",
-        )
+        source = f" from {DATA_API}" if provider == "Sleeper" else ""
+        report.ok("Projections loaded", f"{len(projections)} rows{source}")
     else:
         report.warn(
             "Projections unavailable",
@@ -205,6 +202,13 @@ def run(
         return 1
 
     report.ok("Value board built", f"{len(board.players)} ranked · source '{board.source}'")
+    if board.source == "league-scoring":
+        report.ok("Scored on your league's own rules")
+    else:
+        report.warn(
+            "Not using league-exact scoring",
+            f"falling back to '{board.source}' — values stay usable but less precise",
+        )
     for note in board.notes:
         report.warn("Board note", note)
 
@@ -226,10 +230,10 @@ def run(
         return 1
     if report.warned:
         print(f"  Ready, with {report.warned} warning(s) noted above.")
-        print("  Sanity-check the scoring line and top-10 against Sleeper before tonight.\n")
+        print("  Sanity-check the scoring line and top-10 against the site before tonight.\n")
         return 0
     print("  All checks passed. Sanity-check the scoring line above against what")
-    print("  Sleeper shows in your league settings, then you are ready.\n")
+    print("  the site shows in your league settings, then you are ready.\n")
     return 0
 
 
