@@ -334,3 +334,5 @@ tbody tr.fav .p-team { color: var(--fav); font-weight: 700; }
 .recent li .r-team { color: var(--muted); font-size: 11.5px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent li .r-pick { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 30px; }
 .empty { color: var(--muted); font-size: 13px; padding: 10px 12px; }
+
+.saturated { padding: 8px 12px 0; font-size: 11.5px; color: var(--muted); }

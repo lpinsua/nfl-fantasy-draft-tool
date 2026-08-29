@@ -20,6 +20,7 @@ from pathlib import Path
 
 from draftkit import config as config_mod
 from draftkit import preflight as preflight_mod
+from draftkit import review as review_mod
 from draftkit.api import SleeperClient
 from draftkit.demo import DemoClient
 from draftkit.server import serve
@@ -49,6 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--save", action="store_true",
         help=f"remember these settings in {config_mod.CONFIG_NAME} and reuse them next time",
+    )
+    parser.add_argument(
+        "--review", action="store_true",
+        help="grade the completed draft against the rest of the league, then exit",
     )
     parser.add_argument(
         "--preflight", action="store_true",
@@ -114,6 +119,22 @@ def main(argv: list[str] | None = None) -> int:
         return preflight_mod.run(
             SleeperClient(), username=args.username, league_id=args.league, draft_id=args.draft
         )
+
+    # ---- review: grade the finished draft and exit -----------------------
+    if args.review:
+        if not (args.league or args.draft):
+            print("error: --review needs --league (or --draft)", file=sys.stderr)
+            return 2
+        client = SleeperClient()
+        session = Session(client)
+        try:
+            session.connect(args.league, args.draft or None, args.username or None)
+        except Exception as exc:
+            print(f"error: could not load that draft: {exc}", file=sys.stderr)
+            return 1
+        session.stop()
+        print(review_mod.render(session))
+        return 0
 
     # ---- pick a data source ---------------------------------------------
     if args.demo:

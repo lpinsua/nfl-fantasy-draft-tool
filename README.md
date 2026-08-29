@@ -100,6 +100,7 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 
 ```
 --preflight            check connectivity and your league, print findings, exit
+--review               grade the finished draft against the rest of the league
 --username NAME        your Sleeper username
 --league ID            skip the picker, connect straight to a league
 --draft ID             skip the picker, connect straight to a draft

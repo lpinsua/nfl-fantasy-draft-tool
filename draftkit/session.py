@@ -243,6 +243,7 @@ class Session:
                 "roster": [p.to_dict() for p in roster],
                 "roster_counts": state.roster_counts(),
                 "runs": state.position_runs(),
+                "saturated": sorted(state.saturated_positions()),
                 "recent": self._recent_picks(state, 12),
                 "last_sync": self.last_sync,
                 "error": self.last_error,

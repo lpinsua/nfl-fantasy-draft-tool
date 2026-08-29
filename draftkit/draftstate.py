@@ -6,11 +6,19 @@ import math
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from .league import LeagueSettings, positional_need
+from .league import LeagueSettings, flex_capacity, positional_need
 from .values import Board, Player
 
 # Positions to hold off on until the very end of the draft.
 LATE_ROUND_ONLY = frozenset({"K", "DEF"})
+
+# Positions you only ever start one of, where a backup is a bench piece no
+# matter how good he is. Once the starting slot is full these drop out of the
+# suggestions entirely rather than merely being discounted.
+ONE_AND_DONE = frozenset({"QB", "TE", "K", "DEF"})
+
+# ...until this many rounds remain, when backups are worth a look again.
+BACKUP_ROUNDS = 3
 
 
 @dataclass
@@ -277,6 +285,25 @@ class DraftState:
     def available(self) -> list[Player]:
         return [p for p in self.board.players.values() if p.player_id not in self.drafted]
 
+    def saturated_positions(self) -> set[str]:
+        """Positions where you already have everyone you could start.
+
+        Only covers the one-of positions: a spare running back or receiver is
+        always worth something, a third quarterback never is. Flex capacity is
+        rounded, since you cannot start a tenth of a tight end.
+        """
+        counts = self.roster_counts()
+        capacity = flex_capacity(self.league)
+        full: set[str] = set()
+        for pos in ONE_AND_DONE:
+            required = self.league.starters.get(pos, 0)
+            if not required:
+                continue
+            startable = required + round(capacity.get(pos, 0.0))
+            if counts.get(pos, 0) >= startable:
+                full.add(pos)
+        return full
+
     def position_runs(self, window: int = 10) -> dict[str, int]:
         """How many of each position went in the last N picks."""
         runs: dict[str, int] = {}
@@ -325,6 +352,7 @@ class DraftState:
 
         rounds_left = self.meta.rounds - self.current_round + 1
         runs = self.position_runs()
+        saturated = self.saturated_positions()
         results: list[Recommendation] = []
 
         for player in sorted(available, key=lambda p: -p.vorp)[:120]:
@@ -335,6 +363,10 @@ class DraftState:
             score = player.vorp * (0.40 + 0.60 * pos_need) + 0.6 * max(0.0, vona)
 
             if player.position in LATE_ROUND_ONLY and rounds_left > 2:
+                score -= 1000.0
+            elif player.position in saturated and rounds_left > BACKUP_ROUNDS:
+                # You cannot start another one of these, so however good he is
+                # he is a bench piece. Keep him out of the way until the end.
                 score -= 1000.0
             # Same horizon the VONA figure uses, so the two agree.
             survival = 1.0 if auction else availability(player, after_next, self.picks_made)

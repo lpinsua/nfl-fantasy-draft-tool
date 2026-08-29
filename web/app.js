@@ -379,6 +379,12 @@ function renderRoster() {
 
 function renderRecent() {
   const l = state.live;
+  const full = l.saturated || [];
+  $('saturated').textContent = full.length
+    ? `${full.join(', ')} filled — hidden from Take now until the last rounds`
+    : '';
+  $('saturated').classList.toggle('hidden', full.length === 0);
+
   const runs = Object.entries(l.runs || {})
     .sort((a, b) => b[1] - a[1])
     .filter(([, n]) => n >= 3)
