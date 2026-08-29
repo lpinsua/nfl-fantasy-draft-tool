@@ -34,7 +34,10 @@ class TeamReport:
     picks: list[Pick] = field(default_factory=list)
     starters: list[Player] = field(default_factory=list)
     bench: list[Player] = field(default_factory=list)
-    starter_points: float = 0.0
+    unfilled: list[str] = field(default_factory=list)
+    drafted_points: float = 0.0     # what the drafted starters alone score
+    waiver_points: float = 0.0      # replacement level for any empty slot
+    starter_points: float = 0.0     # the two together -- what teams are ranked on
     total_vorp: float = 0.0
     rank: int = 0
 
@@ -56,14 +59,18 @@ class TeamReport:
         return sorted(scored, key=lambda p: (p.value or 0))[:3]
 
 
-def best_lineup(players: list[Player], league: LeagueSettings) -> tuple[list[Player], list[Player]]:
-    """Fill the league's starting slots with the best roster can field.
+def best_lineup(
+    players: list[Player], league: LeagueSettings
+) -> tuple[list[Player], list[Player], list[str]]:
+    """Fill the league's starting slots with the best the roster can field.
 
     Dedicated slots first, then flex spots from whoever is left -- the same
-    greedy fill the replacement-level model uses, so the two agree.
+    greedy fill the replacement-level model uses, so the two agree. Also
+    reports any slot nobody could fill.
     """
     remaining = sorted(players, key=lambda p: -p.points)
     starters: list[Player] = []
+    unfilled: list[str] = []
 
     def take(eligible: tuple[str, ...]) -> Player | None:
         for i, candidate in enumerate(remaining):
@@ -74,14 +81,30 @@ def best_lineup(players: list[Player], league: LeagueSettings) -> tuple[list[Pla
     for pos, count in league.starters.items():
         for _ in range(count):
             picked = take((pos,))
-            if picked:
-                starters.append(picked)
+            starters.append(picked) if picked else unfilled.append(pos)
     for slot, count in league.flex_slots.items():
         for _ in range(count):
             picked = take(FLEX_ELIGIBILITY.get(slot, ()))
-            if picked:
-                starters.append(picked)
-    return starters, remaining
+            starters.append(picked) if picked else unfilled.append(slot)
+    return starters, remaining, unfilled
+
+
+def waiver_fill(unfilled: list[str], replacement: dict[str, float]) -> float:
+    """Points an empty starting slot is really worth.
+
+    A roster with no kicker is not a roster that scores zero at kicker -- it is
+    one waiver claim away from a replacement-level kicker. Scoring the gap at
+    zero would punish a team for something fixable in thirty seconds, and would
+    make the league table mostly a ranking of who spent a late pick on a K.
+    """
+    total = 0.0
+    for slot in unfilled:
+        if slot in replacement:
+            total += replacement[slot]
+        else:
+            eligible = FLEX_ELIGIBILITY.get(slot, ())
+            total += max((replacement.get(pos, 0.0) for pos in eligible), default=0.0)
+    return total
 
 
 def build_reports(
@@ -90,6 +113,7 @@ def build_reports(
     league: LeagueSettings,
     team_names: dict[int, str],
     teams: int,
+    replacement: dict[str, float] | None = None,
 ) -> list[TeamReport]:
     reports: dict[int, TeamReport] = {}
     for raw in sorted(picks, key=lambda p: int(p.get("pick_no") or 0)):
@@ -111,10 +135,13 @@ def build_reports(
     for slot in range(1, teams + 1):
         reports.setdefault(slot, TeamReport(slot=slot, name=team_names.get(slot, f"Team {slot}")))
 
+    levels = replacement or {}
     for report in reports.values():
         roster = [p.player for p in report.picks]
-        report.starters, report.bench = best_lineup(roster, league)
-        report.starter_points = sum(p.points for p in report.starters)
+        report.starters, report.bench, report.unfilled = best_lineup(roster, league)
+        report.drafted_points = sum(p.points for p in report.starters)
+        report.waiver_points = waiver_fill(report.unfilled, levels)
+        report.starter_points = report.drafted_points + report.waiver_points
         report.total_vorp = sum(p.vorp for p in roster)
 
     ordered = sorted(reports.values(), key=lambda r: -r.starter_points)
@@ -156,7 +183,8 @@ def render(session) -> str:
         return "Not connected to a draft."
 
     reports = build_reports(
-        state.picks, session.board.players, league, session.team_names, meta.teams
+        state.picks, session.board.players, league, session.team_names, meta.teams,
+        replacement=session.board.replacement,
     )
     if not any(r.picks for r in reports):
         return "That draft has no picks yet — nothing to review."
@@ -175,7 +203,9 @@ def render(session) -> str:
 
     # ---- the table ------------------------------------------------------
     add("")
-    add("  Projected starting lineup, best each roster can field:")
+    add("  Projected starting lineup, best each roster can field.")
+    add("  Any empty starting slot is scored at waiver level, not zero — a missing")
+    add("  kicker is one claim away, and should not decide the table.")
     add("")
     add(f"  {'#':>2}  {'TEAM':<22}{'STARTERS':>10}  {'':22} {'ROSTER'}")
     for report in reports:
@@ -183,8 +213,9 @@ def render(session) -> str:
         shape = "/".join(
             f"{n}{pos}" for pos, n in sorted(report.counts.items(), key=lambda kv: -kv[1])
         )
+        gap = f" +{', '.join(report.unfilled)} from waivers" if report.unfilled else ""
         add(f"  {report.rank:>2}  {report.name[:22]:<22}{report.starter_points:>10.1f}  "
-            f"{_bar(report.starter_points, best)} {shape}{marker}")
+            f"{_bar(report.starter_points, best)} {shape}{gap}{marker}")
 
     # ---- your team ------------------------------------------------------
     if mine and mine.picks:
@@ -198,6 +229,14 @@ def render(session) -> str:
         add("")
         add(f"  Finished {mine.rank} of {meta.teams}          Grade: {_grade(mine.rank, meta.teams)}")
         add(f"  Starting lineup      {mine.starter_points:.1f} projected points")
+        if mine.unfilled:
+            filled = ", ".join(mine.unfilled)
+            add(f"    of which           {mine.waiver_points:.1f} is a waiver-level "
+                f"{filled} you still need to add")
+            # Compare like with like: everyone's drafted starters only.
+            ahead = sum(1 for r in reports if r.drafted_points > mine.drafted_points)
+            add(f"    (scored at zero    you would rank {ahead + 1} instead of {mine.rank} — "
+                f"which is why it is not scored that way)")
         add(f"  vs the best roster   {gap_to_first:+.1f}")
         add(f"  vs the league median {mine.starter_points - median:+.1f}")
         add(f"  Total VORP drafted   {mine.total_vorp:+.1f}")
@@ -233,7 +272,8 @@ def render(session) -> str:
         for pos, required in league.starters.items():
             have = mine.counts.get(pos, 0)
             if have < required:
-                gaps.append(f"{pos} ({have}/{required} — a starting slot is empty)")
+                how = " — grab one off waivers before week 1" if pos in ("K", "DEF") else ""
+                gaps.append(f"{pos} ({have}/{required} — a starting slot is empty){how}")
             elif pos in ("RB", "WR") and have < required + 2:
                 gaps.append(f"{pos} depth ({have} rostered)")
         if gaps:
