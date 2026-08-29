@@ -240,6 +240,7 @@ class Session:
                 "picks_until_turn": state.picks_until_my_turn,
                 "drafted": sorted(state.drafted),
                 "recommendations": [r.to_dict() for r in recs],
+                "fallers": [f.to_dict() for f in state.fallers()],
                 "roster": [p.to_dict() for p in roster],
                 "roster_counts": state.roster_counts(),
                 "runs": state.position_runs(),

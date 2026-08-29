@@ -138,6 +138,18 @@ read-only identifiers. Don't add anything genuinely secret to that file.
   handy for spotting which of your guys are still on the board.
 - **?** (button or keypress) opens a glossary of every column and term.
 
+### Take now vs Falling
+
+Two panels, deliberately answering different questions:
+
+- **Take now** is advice. It weights value by what your roster still needs, and
+  hides positions you can no longer start — a second quarterback in a one-QB
+  league is a bench piece however good he is.
+- **Falling** is information. Good players the room has let slide well past
+  their ADP, *whatever* your needs, including the positions Take now is hiding.
+  It tells you an elite tight end is sitting there at a 26-pick discount, and
+  also that you already start one. The call is yours.
+
 ### Using your own rankings
 
 Any CSV with a name column works, including a FantasyPros export. Recognised value

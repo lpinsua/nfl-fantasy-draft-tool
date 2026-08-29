@@ -20,6 +20,9 @@ ONE_AND_DONE = frozenset({"QB", "TE", "K", "DEF"})
 # ...until this many rounds remain, when backups are worth a look again.
 BACKUP_ROUNDS = 3
 
+# How far past his ADP a player must slide before he counts as falling.
+FALL_THRESHOLD = 8.0
+
 
 @dataclass
 class DraftMeta:
@@ -285,6 +288,55 @@ class DraftState:
     def available(self) -> list[Player]:
         return [p for p in self.board.players.values() if p.player_id not in self.drafted]
 
+    def _next_chance(self) -> int:
+        """The next pick at which you could actually take a player.
+
+        On the clock, that is your following turn; otherwise it is the turn you
+        are waiting for. A flat round's worth of picks is wrong at the turn of a
+        snake, where two of your picks can be only a few apart.
+        """
+        following = self.next_picks(2)
+        if self.is_my_turn:
+            if len(following) > 1:
+                return following[1]
+            return self.on_the_clock + self.meta.teams
+        return following[0] if following else self.on_the_clock
+
+    def fallers(self, limit: int = 4) -> list[Recommendation]:
+        """Good players the room has let slide, whatever your roster needs.
+
+        "Take now" deliberately hides positions you can no longer start, which
+        would otherwise bury a genuinely elite player sliding well past his ADP.
+        This is where those still surface -- as information, not as advice.
+        """
+        if self.meta.is_auction:
+            return []
+        clock = self.on_the_clock
+        horizon = self._next_chance()
+        saturated = self.saturated_positions()
+        results: list[Recommendation] = []
+
+        for player in sorted(self.available(), key=lambda p: -p.vorp)[:100]:
+            if player.adp is None or player.vorp <= 0:
+                continue
+            fell = clock - player.adp
+            if fell < FALL_THRESHOLD:
+                continue
+            reason = f"fell {fell:.0f} picks past ADP {player.adp:.0f}"
+            if player.position in saturated:
+                reason += f" · you already start a {player.position}"
+            results.append(
+                Recommendation(
+                    player=player,
+                    score=player.vorp,
+                    vona=0.0,
+                    need=0.0,
+                    survival=availability(player, horizon, self.picks_made),
+                    reason=reason,
+                )
+            )
+        return results[:limit]
+
     def saturated_positions(self) -> set[str]:
         """Positions where you already have everyone you could start.
 
@@ -328,17 +380,7 @@ class DraftState:
 
         need = positional_need(self.roster_counts(), self.league)
         auction = self.meta.is_auction
-        next_pick = self.my_next_pick or self.on_the_clock
-        following = self.next_picks(2)
-
-        # "Your next chance at this player." On the clock, that is the turn
-        # after this one; otherwise it is the turn you are waiting for. Using a
-        # flat round's worth of picks instead is badly wrong at the turn of a
-        # snake, where two of your picks can be only a few apart.
-        if self.is_my_turn:
-            after_next = following[1] if len(following) > 1 else next_pick + self.meta.teams
-        else:
-            after_next = following[0] if following else self.on_the_clock
+        after_next = self._next_chance()
 
         by_pos: dict[str, list[Player]] = {}
         for player in available:

@@ -219,6 +219,7 @@ async function tick() {
     renderClock();
     renderCountdown();
     renderRecs();
+    renderFallers();
     renderRoster();
     renderRecent();
     renderTable();
@@ -344,6 +345,34 @@ function renderRecs() {
           <span class="tier-chip">T${r.tier}</span>
           ${r.adp != null && !auction ? `<span class="muted">ADP ${r.adp}${val != null ? ` (${val > 0 ? '+' : ''}${val})` : ''}</span>` : ''}
           ${auction ? '' : `<span class="muted">${survival}% to last</span>`}
+        </div>
+        ${r.reason ? `<div class="rec-why">${esc(r.reason)}</div>` : ''}
+      </div>`;
+    })
+    .join('');
+}
+
+/** Good players the room let slide, shown whatever your roster needs.
+ *  "Take now" hides positions you can no longer start, which would otherwise
+ *  bury an elite player falling well past his ADP. This is where he shows up. */
+function renderFallers() {
+  const rows = (state.live && state.live.fallers) || [];
+  $('fallers-panel').classList.toggle('hidden', rows.length === 0);
+  if (!rows.length) return;
+  $('fallers').innerHTML = rows
+    .map((r) => {
+      const isFav = state.favTeam && r.team === state.favTeam;
+      return `
+      <div class="rec faller ${isFav ? 'fav-rec' : ''}">
+        <div class="rec-head">
+          <span class="rec-name">${esc(r.name)}${isFav ? ` <span class="fav-mark">${TEAMS[state.favTeam][2]}</span>` : ''}</span>
+          <span class="rec-score">${r.vorp > 0 ? '+' : ''}${r.vorp} VORP</span>
+        </div>
+        <div class="rec-meta">
+          ${posTag(r.pos, r.pos_rank)}
+          <span class="muted">${esc(r.team || 'FA')}</span>
+          <span class="tier-chip">T${r.tier}</span>
+          <span class="muted">${Math.round((r.survival || 0) * 100)}% to last</span>
         </div>
         ${r.reason ? `<div class="rec-why">${esc(r.reason)}</div>` : ''}
       </div>`;

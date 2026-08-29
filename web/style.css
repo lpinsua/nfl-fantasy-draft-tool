@@ -336,3 +336,7 @@ tbody tr.fav .p-team { color: var(--fav); font-weight: 700; }
 .empty { color: var(--muted); font-size: 13px; padding: 10px 12px; }
 
 .saturated { padding: 8px 12px 0; font-size: 11.5px; color: var(--muted); }
+
+/* Falling: information, not advice -- visually quieter than "Take now". */
+.rec.faller { border-left-color: var(--warn); background: transparent; }
+.rec.faller .rec-why { color: var(--warn); }
