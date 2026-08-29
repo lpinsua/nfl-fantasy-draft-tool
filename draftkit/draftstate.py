@@ -244,9 +244,20 @@ class DraftState:
         return not self.meta.is_auction and self.my_next_pick == self.on_the_clock
 
     def my_roster(self) -> list[Player]:
-        if self._my_picks:
-            return self._my_picks
-        return self.rosters.get(self.my_slot, []) if self.my_slot else []
+        """Everything you have drafted, from both ways of identifying a pick.
+
+        Autopicked and commissioner-made picks can arrive with picked_by unset,
+        so matching on that alone silently loses them -- and an undercounted
+        roster keeps reporting needs you have already filled. Merge both
+        sources rather than trusting either.
+        """
+        merged: list[Player] = []
+        seen: set[str] = set()
+        for player in list(self._my_picks) + list(self.rosters.get(self.my_slot, [])):
+            if player.player_id not in seen:
+                seen.add(player.player_id)
+                merged.append(player)
+        return merged
 
     def my_spend(self) -> int:
         if self.meta.is_auction and self.my_user_id:
@@ -319,7 +330,9 @@ class DraftState:
         for player in sorted(available, key=lambda p: -p.vorp)[:120]:
             pos_need = need.get(player.position, 0.3)
             vona = 0.0 if auction else player.vorp - expected_next.get(player.position, 0.0)
-            score = player.vorp * (0.55 + 0.45 * pos_need) + 0.6 * max(0.0, vona)
+            # Roster need has to swing the score hard enough to actually keep a
+            # position you have already filled off the list.
+            score = player.vorp * (0.40 + 0.60 * pos_need) + 0.6 * max(0.0, vona)
 
             if player.position in LATE_ROUND_ONLY and rounds_left > 2:
                 score -= 1000.0

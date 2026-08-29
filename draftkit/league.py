@@ -186,34 +186,68 @@ def replacement_levels(
     return levels
 
 
-def positional_need(roster_counts: dict[str, int], league: LeagueSettings) -> dict[str, float]:
-    """How badly a roster still needs each position, as a 0..1-ish weight.
+# A flex slot is not equally likely to be filled by every eligible position.
+# In practice a standard flex goes to a running back or receiver almost every
+# time, so a tight end should not be credited with a whole extra starting spot.
+FLEX_USAGE: dict[str, dict[str, float]] = {
+    "FLEX": {"RB": 0.45, "WR": 0.45, "TE": 0.10},
+    "WRRB_FLEX": {"RB": 0.50, "WR": 0.50},
+    "WRRB_WRT": {"RB": 0.45, "WR": 0.45, "TE": 0.10},
+    "REC_FLEX": {"WR": 0.75, "TE": 0.25},
+    "SUPER_FLEX": {"QB": 0.70, "RB": 0.10, "WR": 0.15, "TE": 0.05},
+    "IDP_FLEX": {"DL": 0.34, "LB": 0.33, "DB": 0.33},
+}
 
-    1.0 means a required starting slot is still empty; the weight decays once
-    starters are filled so the model stops forcing needs that are already met.
+# What one more of this position is worth once you can no longer start him.
+# You only ever play one quarterback, kicker and defence, so a backup there is
+# close to worthless; running back and receiver depth genuinely matters.
+DEPTH_VALUE = {"RB": 0.40, "WR": 0.40, "TE": 0.15, "QB": 0.12, "K": 0.02, "DEF": 0.02}
+
+
+def flex_capacity(league: LeagueSettings) -> dict[str, float]:
+    """Expected number of flex spots each position will actually fill."""
+    capacity: dict[str, float] = {}
+    for slot, count in league.flex_slots.items():
+        shares = FLEX_USAGE.get(slot)
+        if shares is None:
+            # Unknown flex type: split it evenly across whatever may fill it.
+            eligible = FLEX_ELIGIBILITY.get(slot, ())
+            shares = {pos: 1.0 / len(eligible) for pos in eligible} if eligible else {}
+        for pos, share in shares.items():
+            capacity[pos] = capacity.get(pos, 0.0) + count * share
+    return capacity
+
+
+def positional_need(roster_counts: dict[str, int], league: LeagueSettings) -> dict[str, float]:
+    """How badly a roster still needs each position, as a 0..1 weight.
+
+    1.0 means a starting slot is genuinely unfilled. Once you can no longer
+    start another player at a position the weight falls away sharply -- a
+    second quarterback in a one-quarterback league is a bench piece, however
+    good he is, and should not keep crowding the suggestions.
     """
     need: dict[str, float] = {}
-    flex_capacity: dict[str, int] = {}
-    for slot, count in league.flex_slots.items():
-        for pos in FLEX_ELIGIBILITY.get(slot, ()):
-            flex_capacity[pos] = flex_capacity.get(pos, 0) + count
+    capacity = flex_capacity(league)
 
     for pos in SKILL_POSITIONS:
         required = league.starters.get(pos, 0)
         have = roster_counts.get(pos, 0)
         if required and have < required:
-            # Empty required starting slot: maximum urgency.
-            need[pos] = 1.0
+            need[pos] = 1.0                       # a required starter is missing
             continue
-        surplus = have - required
-        flex = flex_capacity.get(pos, 0)
-        if flex and surplus < flex:
-            need[pos] = 0.75
-        elif required == 0 and pos in ("K", "DEF"):
-            need[pos] = 0.05
+
+        # How much more of this position you could still put in a lineup.
+        room = (required + capacity.get(pos, 0.0)) - have
+        floor = DEPTH_VALUE.get(pos, 0.2)
+        if room >= 1.0:
+            need[pos] = 1.0                       # a whole startable slot left
+        elif room > 0:
+            # Part of a flex spot left. Slide from bench value up to a full
+            # starting need, so a position that only fills a flex one time in
+            # ten is treated as very nearly filled.
+            need[pos] = floor + (1.0 - floor) * room
         else:
-            # Depth only: decays as the bench fills with this position.
-            need[pos] = max(0.15, 0.6 * (0.6 ** max(0, surplus - flex)))
+            need[pos] = max(0.05, floor * (0.5 ** -room))
     return need
 
 
