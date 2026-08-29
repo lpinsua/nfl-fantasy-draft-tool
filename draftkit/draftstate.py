@@ -91,7 +91,11 @@ def availability(player: Player, at_pick: int, picks_made: int) -> float:
         return 0.5
     if at_pick <= picks_made:
         return 1.0
-    sigma = max(4.0, 0.17 * player.adp)
+    # ADP is an average across many drafts, and real draft slots scatter widely
+    # around it -- a player going 20th on average still lands anywhere from the
+    # low teens to the mid-30s. Too tight a spread here produces confident "0%"
+    # answers that are simply wrong.
+    sigma = max(7.0, 0.22 * player.adp)
     # Already survived past their ADP -> shift the distribution to reflect that.
     effective_adp = max(player.adp, picks_made + 0.5)
     return 1.0 - _norm_cdf((at_pick - 0.5 - effective_adp) / sigma)
@@ -288,7 +292,15 @@ class DraftState:
         auction = self.meta.is_auction
         next_pick = self.my_next_pick or self.on_the_clock
         following = self.next_picks(2)
-        after_next = following[1] if len(following) > 1 else next_pick + self.meta.teams
+
+        # "Your next chance at this player." On the clock, that is the turn
+        # after this one; otherwise it is the turn you are waiting for. Using a
+        # flat round's worth of picks instead is badly wrong at the turn of a
+        # snake, where two of your picks can be only a few apart.
+        if self.is_my_turn:
+            after_next = following[1] if len(following) > 1 else next_pick + self.meta.teams
+        else:
+            after_next = following[0] if following else self.on_the_clock
 
         by_pos: dict[str, list[Player]] = {}
         for player in available:
@@ -311,10 +323,8 @@ class DraftState:
 
             if player.position in LATE_ROUND_ONLY and rounds_left > 2:
                 score -= 1000.0
-            survival = (
-                1.0 if auction
-                else availability(player, next_pick + self.meta.teams, self.picks_made)
-            )
+            # Same horizon the VONA figure uses, so the two agree.
+            survival = 1.0 if auction else availability(player, after_next, self.picks_made)
 
             results.append(
                 Recommendation(
