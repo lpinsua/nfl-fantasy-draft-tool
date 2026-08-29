@@ -329,7 +329,7 @@ function renderRecs() {
   const auction = state.live.is_auction;
   box.innerHTML = recs
     .map((r, i) => {
-      const val = !auction && r.adp != null ? Math.round(r.adp - state.live.on_the_clock) : null;
+      const val = !auction && r.adp != null ? Math.round(state.live.on_the_clock - r.adp) : null;
       const survival = Math.round((r.survival || 0) * 100);
       const isFav = state.favTeam && r.team === state.favTeam;
       return `
@@ -412,7 +412,7 @@ function sortValue(p, key, onClock) {
     case 'name': return p.name.toLowerCase();
     case 'pts': return p.pts;
     case 'adp': return p.adp;
-    case 'val': return p.adp == null ? null : p.adp - onClock;
+    case 'val': return p.adp == null ? null : onClock - p.adp;
     default: return p.vorp;
   }
 }
@@ -480,7 +480,9 @@ function renderTable() {
     if (query && !p.name.toLowerCase().includes(query)) continue;
     shown++;
 
-    const val = p.adp != null && onClock ? Math.round(p.adp - onClock) : null;
+    // Picks he has fallen past his ADP: positive = the room let him slide to
+    // you, negative = you would be taking him earlier than the market does.
+    const val = p.adp != null && onClock ? Math.round(onClock - p.adp) : null;
     const valCls = val == null ? '' : val >= 10 ? 'val-good' : val <= -10 ? 'val-bad' : '';
     // Only mark tier breaks when looking at a single position; across
     // positions the tier numbers interleave and the rule is just noise.

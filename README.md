@@ -71,7 +71,7 @@ pick"*, *"4 WRs gone in last 10"*.
 | **Proj** | Projected season points **under your league's scoring**. |
 | **VORP** | Points above replacement. This is the ranking that matters. |
 | **ADP** | Average draft position, in your league's format (2QB ADP if superflex). |
-| **Val** | ADP minus the current pick. Green = falling to you. Red = a reach. |
+| **Val** | Picks he has fallen past his ADP (current pick − ADP). Green = the room let him slide to you. Red = you'd be reaching. |
 
 Filter by position, search by name, and click **×** to mark anyone off the board by
 hand.

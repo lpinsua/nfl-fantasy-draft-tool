@@ -372,9 +372,12 @@ class DraftState:
         if runs.get(player.position, 0) >= 4:
             bits.append(f"{runs[player.position]} {player.position}s gone in last 10")
         if player.adp is not None and not self.meta.is_auction:
-            delta = player.adp - self.on_the_clock
-            if delta >= 12:
-                bits.append(f"ADP {player.adp:.0f} — value here")
-            elif delta <= -12:
-                bits.append(f"ADP {player.adp:.0f} — reach")
+            # How far he has fallen past his average draft position. Positive
+            # means the room let him slide to you; negative means taking him
+            # here is earlier than the market would.
+            fallen = self.on_the_clock - player.adp
+            if fallen >= 12:
+                bits.append(f"ADP {player.adp:.0f} — fell {fallen:.0f} picks, value here")
+            elif fallen <= -12:
+                bits.append(f"ADP {player.adp:.0f} — {abs(fallen):.0f} picks early, a reach")
         return "; ".join(bits[:3])
