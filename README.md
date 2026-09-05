@@ -13,16 +13,24 @@ Python 3.9+ and a browser.
 
 ```bash
 # 1. Hours before the draft — check everything works against YOUR league
-python3 draft.py --preflight --username <your-sleeper-username>
+python3 draft.py --preflight
 
 # 2. Anytime — rehearse the interface with no network
 python3 draft.py --demo
 
 # 3. Draft night
-python3 draft.py --username <your-sleeper-username>
+python3 draft.py
 ```
 
-Then open <http://127.0.0.1:8777> (it opens by itself) and pick your league.
+Then open <http://127.0.0.1:8777> (it opens by itself).
+
+Those work bare because this folder already remembers your leagues. To see
+which, and to run one that is not the default:
+
+```bash
+python3 draft.py --leagues        # what is saved, and which one runs bare
+python3 draft.py --use espn       # run a different saved league
+```
 
 **Run the preflight check before draft day, not five minutes before.** It exercises
 every API call the board depends on and prints what it detected, so if anything is
@@ -99,9 +107,14 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 ## Options
 
 ```
+--leagues              list the leagues saved here, then exit
+--use NAME             run a saved league by name (also spelled --league-name)
+--save-as NAME         remember these settings under a new name
+--set-default NAME     choose which league runs with no flags, then exit
 --espn                 use ESPN instead of Sleeper (with --league and --season)
 --espn-login           store ESPN cookies for a private league, then exit
 --season YEAR          season year, required for ESPN
+--team-id ID           your ESPN team id (the teamId= in your league URL)
 --preflight            check connectivity and your league, print findings, exit
 --review               grade the finished draft against the rest of the league
 --username NAME        your Sleeper username
@@ -119,7 +132,7 @@ The tool is built to degrade rather than fail. In rough order of likelihood:
 --verbose              debug logging
 ```
 
-### Remembering your league
+### Remembering your leagues
 
 Run once with `--save` and every later run needs no flags at all:
 
@@ -127,6 +140,23 @@ Run once with `--save` and every later run needs no flags at all:
 python3 draft.py --username you --league 123456789 --team MIA --save
 python3 draft.py            # from now on, this is the whole command
 ```
+
+**More than one league?** Save each under a short name of your own choosing.
+They live side by side in `draft.config.json` — adding one never disturbs
+another, so you do not need a second copy of this tool:
+
+```bash
+# add a league, under the name "espn"
+python3 draft.py --espn --league 884705387 --season 2026 --team-id 17 --save-as espn
+
+python3 draft.py --leagues            # see them all; * marks the bare-command one
+python3 draft.py --use espn           # run that one
+python3 draft.py --set-default espn   # or make it the one `python3 draft.py` uses
+```
+
+Each saved league remembers its own site, so `--use espn` needs no `--espn`.
+A config file from an older version — settings at the top level with no names —
+still works, and becomes a single league called `default`.
 
 Settings land in `draft.config.json`. Nothing there is a credential — Sleeper's
 API takes no password, token or key, and a username and league id are public
@@ -161,12 +191,21 @@ knows the difference.
 
 ```bash
 python3 draft.py --espn-login                                   # once, private leagues only
-python3 draft.py --espn --preflight --league 123456 --season 2026
-python3 draft.py --espn --league 123456 --season 2026 --save     # then --espn alone
+python3 draft.py --espn --league 123456 --season 2026 --team-id 7 --preflight
+python3 draft.py --espn --league 123456 --season 2026 --team-id 7 --save-as espn
+python3 draft.py --use espn                                     # then just this
 ```
 
-Your league id is the number in the league URL:
-`fantasy.espn.com/football/league?leagueId=`**`123456`**
+Everything ESPN needs is in your own league URL, so open the league in a browser
+and read it off the address bar:
+
+`fantasy.espn.com/football/league?leagueId=`**`123456`**`&teamId=`**`7`**`&seasonId=`**`2026`**
+
+- **`leagueId`** → `--league`
+- **`teamId`** → `--team-id`, which is how the board knows which roster is yours.
+  Sleeper finds that from your username; ESPN has no username to look up, so
+  without it "Your roster" and pick timing stay blank until the draft starts.
+- **`seasonId`** → `--season`
 
 **Private leagues need credentials — real ones.** ESPN authenticates with the
 `espn_s2` and `SWID` cookies from a logged-in browser, and those grant access to
@@ -175,7 +214,7 @@ them and stores them in `~/.config/draftkit/secrets.json`, readable only by you
 and **never** in this repository, which is public. Logging out of ESPN
 everywhere invalidates them.
 
-Two differences worth knowing:
+Three differences worth knowing:
 
 - **Scoring is exact without any rule mapping.** ESPN returns projections it has
   already scored under your league's own settings, so this does not try to
@@ -183,6 +222,10 @@ Two differences worth knowing:
 - **ADP is a draft rank, not an average pick.** ESPN publishes ranks rather than
   average draft position. Same ordering, which is all the model uses it for, but
   the "fell N picks past ADP" figures are looser than on Sleeper.
+- **You are identified by team id, not by name.** See `--team-id` above. If your
+  league is private and you have run `--espn-login`, the cookies can find your
+  team on their own — but passing the id is exact, costs nothing, and is the
+  only way that works for a league you are not logged in to.
 
 ### Using your own rankings
 

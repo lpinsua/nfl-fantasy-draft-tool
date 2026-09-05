@@ -100,12 +100,15 @@ class Handler(BaseHTTPRequestHandler):
                 league_id = str(body.get("league_id") or "").strip()
                 draft_id = str(body.get("draft_id") or "").strip() or None
                 username = str(body.get("username") or "").strip() or None
+                user_id = str(body.get("user_id") or "").strip() or None
                 if not league_id and draft_id:
                     raw = self.client.draft(draft_id)
                     league_id = str((raw or {}).get("league_id") or "")
                 if not league_id:
                     raise SleeperError("Provide a league or a draft to connect to.")
-                self._send_json(self.session.connect(league_id, draft_id, username))
+                self._send_json(
+                    self.session.connect(league_id, draft_id, username, user_id)
+                )
             elif route == "/api/slot":
                 self.session.set_slot(int(body.get("slot") or 0))
                 self._send_json(self.session.status())

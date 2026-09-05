@@ -39,6 +39,23 @@ class NoLeagueClient(DemoClient):
         return []
 
 
+class UnreadableLeagueClient(DemoClient):
+    """Reachable, but the league itself will not load.
+
+    This is the ESPN shape of failure: its state() answers from settings without
+    a request, so the first call that actually goes out is the league fetch --
+    and that one used to escape as a traceback.
+    """
+
+    def league(self, league_id):
+        raise SleeperError("could not reach ESPN: 403 Forbidden")
+
+
+class NoProjectionsErrorClient(DemoClient):
+    def projections(self, season, max_age=0):
+        raise SleeperError("projections endpoint moved")
+
+
 class UnknownUserClient(DemoClient):
     def user(self, username):
         return None
@@ -107,6 +124,32 @@ class PreflightTest(unittest.TestCase):
         code, out = run_capture(DemoClient())
         self.assertEqual(code, 1)
         self.assertIn("Could not determine which league", out)
+
+    def test_an_unreadable_league_reports_instead_of_tracebacking(self):
+        # If this ever raises, the test fails by erroring -- which is the point.
+        code, out = run_capture(UnreadableLeagueClient(), league_id="884705387",
+                                provider="ESPN")
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL", out)
+        self.assertIn("403 Forbidden", out, "the real reason must reach the user")
+
+    def test_failing_projections_warn_rather_than_crash(self):
+        code, out = run_capture(NoProjectionsErrorClient(), username="demo")
+        self.assertEqual(code, 0)
+        self.assertIn("Could not load projections", out)
+
+    def test_a_given_team_id_is_used_as_your_identity(self):
+        # ESPN has no username to look up; the team id comes from the league URL.
+        code, out = run_capture(DemoClient(), league_id="L1", team_id="U3",
+                                provider="ESPN")
+        self.assertEqual(code, 0)
+        self.assertIn("Your team id", out)
+        self.assertIn("Your draft slot is 3", out, "the id must reach the draft order")
+
+    def test_espn_does_not_claim_reachability_it_has_not_tested(self):
+        code, out = run_capture(DemoClient(), league_id="L1", provider="ESPN")
+        self.assertNotIn("ESPN API reachable", out)
+        self.assertIn("ESPN season", out)
 
 
 if __name__ == "__main__":

@@ -22,10 +22,14 @@ class Session:
     """One connected league + draft, refreshed by a background poller."""
 
     def __init__(self, client: SleeperClient, csv_path: Path | None = None,
-                 favorite_team: str = ""):
+                 favorite_team: str = "", user_id: str = ""):
         self.client = client
         self.csv_path = csv_path
         self.favorite_team = (favorite_team or "").upper()
+        # A user id known up front, which is how ESPN identifies you: its team
+        # ids come straight out of the league URL, and it has no username to
+        # look up. Used whenever a connect does not carry one of its own.
+        self.default_user_id = str(user_id or "")
         self.lock = threading.RLock()
 
         self.league: LeagueSettings | None = None
@@ -44,7 +48,8 @@ class Session:
 
     # ---- connect --------------------------------------------------------
 
-    def connect(self, league_id: str, draft_id: str | None, username: str | None) -> dict:
+    def connect(self, league_id: str, draft_id: str | None, username: str | None,
+                user_id: str | None = None) -> dict:
         raw_league = self.client.league(league_id)
         if not raw_league:
             raise SleeperError(f"No league found with id {league_id}")
@@ -63,11 +68,12 @@ class Session:
             raise SleeperError(f"No draft found with id {draft_id}")
         meta = parse_draft(raw_draft)
 
-        my_user_id = None
-        if username:
+        # A user id given to us wins: it is exact, and it costs no request.
+        my_user_id = str(user_id or self.default_user_id or "") or None
+        if not my_user_id and username:
             user = self.client.user(username)
             if user:
-                my_user_id = str(user.get("user_id"))
+                my_user_id = str(user.get("user_id")) or None
 
         # Map draft slots to human names so the board reads like the real room.
         users = {str(u.get("user_id")): u for u in self.client.league_users(league_id)}

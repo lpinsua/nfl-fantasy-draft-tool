@@ -47,6 +47,7 @@ def run(
     league_id: str = "",
     draft_id: str = "",
     provider: str = "Sleeper",
+    team_id: str = "",
 ) -> int:
     """Returns a process exit code: 0 = good to go, 1 = something is broken."""
     report = Report()
@@ -58,10 +59,16 @@ def run(
         started = time.time()
         state = client.state()
         season = str(state.get("season") or "")
-        report.ok(
-            f"{provider} API reachable",
-            f"season {season} · week {state.get('week')} · {(time.time()-started)*1000:.0f}ms",
-        )
+        if provider == "Sleeper":
+            report.ok(
+                f"{provider} API reachable",
+                f"season {season} · week {state.get('week')} · {(time.time()-started)*1000:.0f}ms",
+            )
+        else:
+            # ESPN answers this one from its own settings without a request, so
+            # saying "reachable" here would be a claim nothing has tested yet.
+            # The league fetch below is what actually proves the connection.
+            report.ok(f"{provider} season", f"{season} — the league fetch below is the real connection test")
     except SleeperError as exc:
         report.fail(f"{provider} API unreachable", str(exc))
         print(
@@ -73,9 +80,13 @@ def run(
     # 2. Resolve the league, by whichever identifier we were given.
     raw_league: dict[str, Any] | None = None
     raw_draft: dict[str, Any] | None = None
-    my_user_id = ""
+    my_user_id = str(team_id or "")
 
-    if username:
+    if my_user_id:
+        # ESPN identifies you by team id, taken from your own league URL. It is
+        # exact, so it is trusted over a username lookup rather than checked.
+        report.ok("Your team id", f"team {my_user_id} — this is how your draft slot is found")
+    elif username:
         try:
             user = client.user(username)
         except SleeperError as exc:
@@ -88,14 +99,22 @@ def run(
             report.fail(f"No such {provider} user", f"'{username}' — check spelling (it is not your email)")
 
     if draft_id and not league_id:
-        raw_draft = client.draft(draft_id)
+        try:
+            raw_draft = client.draft(draft_id)
+        except SleeperError as exc:
+            raw_draft = None
+            report.fail("Could not load that draft", str(exc))
         if raw_draft:
             league_id = str(raw_draft.get("league_id") or "")
-        else:
+        elif not report.failed:
             report.fail("Draft id not found", draft_id)
 
     if not league_id and my_user_id:
-        leagues = client.user_leagues(my_user_id, season)
+        try:
+            leagues = client.user_leagues(my_user_id, season)
+        except SleeperError as exc:
+            report.fail("Could not list your leagues", str(exc))
+            return 1
         if not leagues:
             report.fail("No leagues found", f"user {my_user_id} has no {season} NFL leagues")
         else:
@@ -113,8 +132,14 @@ def run(
         print("\nCould not determine which league to check. Pass --username or --league.\n")
         return 1
 
-    # 3. League settings: the thing the whole value model depends on.
-    raw_league = raw_league or client.league(league_id)
+    # 3. League settings: the thing the whole value model depends on, and for
+    # ESPN the first call that actually goes out over the network.
+    try:
+        raw_league = raw_league or client.league(league_id)
+    except SleeperError as exc:
+        report.fail(f"Could not load league {league_id} from {provider}", str(exc))
+        print(f"\nNothing else can be checked without a readable league.\n")
+        return 1
     if not raw_league:
         report.fail("League not found", league_id)
         return 1
@@ -131,12 +156,15 @@ def run(
 
     # 4. The draft itself.
     if not raw_draft:
-        drafts = client.league_drafts(league_id)
-        if not drafts:
-            report.fail("No draft attached to this league")
-        else:
-            drafts.sort(key=lambda d: int(d.get("start_time") or 0), reverse=True)
-            raw_draft = client.draft(str(drafts[0].get("draft_id")))
+        try:
+            drafts = client.league_drafts(league_id)
+            if not drafts:
+                report.fail("No draft attached to this league")
+            else:
+                drafts.sort(key=lambda d: int(d.get("start_time") or 0), reverse=True)
+                raw_draft = client.draft(str(drafts[0].get("draft_id")))
+        except SleeperError as exc:
+            report.fail("Could not load the draft", str(exc))
 
     if raw_draft:
         meta = parse_draft(raw_draft)
@@ -183,7 +211,11 @@ def run(
         report.fail("Could not load players", str(exc))
         return 1
 
-    projections = client.projections(league.season or season)
+    try:
+        projections = client.projections(league.season or season)
+    except SleeperError as exc:
+        projections = []
+        report.warn("Could not load projections", str(exc))
     if projections:
         source = f" from {DATA_API}" if provider == "Sleeper" else ""
         report.ok("Projections loaded", f"{len(projections)} rows{source}")

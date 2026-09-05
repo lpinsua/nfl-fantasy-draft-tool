@@ -2,26 +2,44 @@
 
 Context for Claude when working in this repository.
 
-## Whose league this is
+## Whose leagues these are
 
-Saved in `draft.config.json`, which the tool reads as defaults:
+Saved in `draft.config.json` under short names, which the tool reads as
+defaults. Two are set up, and `sleeper` is the one that runs bare:
 
-| | |
-|---|---|
-| Sleeper username | `lpinsua` |
-| League ID | `1389723692459638784` (https://sleeper.com/leagues/1389723692459638784/) |
-| Favourite team | **Miami Dolphins (MIA)** — highlighted on the board |
+| name | site | league | notes |
+|---|---|---|---|
+| `sleeper` * | Sleeper | `1389723692459638784` (https://sleeper.com/leagues/1389723692459638784/) | username `lpinsua` |
+| `espn` | ESPN | `884705387`, season 2026, team id `17` | needs cookies if private |
 
-**None of this is a credential.** Sleeper's API needs no password, token or key;
-a username and league id are public read-only identifiers. This repository is
-**public**, so never add anything here that actually is a secret.
+Favourite team is **Miami Dolphins (MIA)** on both — highlighted on the board.
 
-The everyday command is therefore just:
+**None of this is a credential.** Neither API needs a password, token or key for
+these fields; usernames, league ids, season years and team ids are public
+read-only identifiers. ESPN's `espn_s2`/`SWID` cookies *are* credentials and
+live in `~/.config/draftkit/secrets.json`, never here. This repository is
+**public**, so never add anything to it that actually is a secret.
+
+The everyday commands are therefore:
 
 ```bash
-python3 draft.py                  # uses the saved defaults
+python3 draft.py                  # the default league (sleeper)
 python3 draft.py --preflight      # same, but check and exit
+python3 draft.py --leagues        # what is saved, and which one is default
+python3 draft.py --use espn       # the ESPN league
+python3 draft.py --set-default espn   # make ESPN the bare-command one
 ```
+
+Adding another league never disturbs the ones already saved:
+
+```bash
+python3 draft.py --espn --league <id> --season 2026 --team-id <n> --save-as <name>
+```
+
+`config.load()` still returns a flat dict of one league's settings, so callers
+that do not care about multiple leagues never had to change; `load(name=...)`
+picks a different one. An old flat config file is read as a single league
+called `default` and upgraded in place the next time anything is saved.
 
 ## Providers
 
@@ -32,6 +50,11 @@ write another adapter; do not touch the engine.
 
 **ESPN specifics.** Private leagues need the `espn_s2`/`SWID` cookies, which are
 real credentials and live in `~/.config/draftkit/secrets.json`, never here.
+Missing cookies are a warning, not a hard stop — plenty of ESPN leagues read
+fine without them, and only ESPN can say whether one does. Identity is a team
+id (`--team-id`, the `teamId=` in the league URL) rather than a username: it is
+exact, needs no request, and is the only thing that works when not logged in.
+`Session(user_id=...)` / `connect(..., user_id=...)` carry it.
 ESPN pre-applies league scoring to projections (`appliedTotal`), so the adapter
 sets `pts_league` rather than trying to replicate ESPN's stat-id scoring table.
 ESPN is blocked from the sandbox exactly like Sleeper, so `tests/espn_fixtures.py`

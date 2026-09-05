@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Draft-night assistant for Sleeper fantasy football leagues.
+"""Draft-night assistant for Sleeper and ESPN fantasy football leagues.
 
-    python3 draft.py --preflight --username you   # run this BEFORE draft day
-    python3 draft.py --demo                       # rehearse, no network needed
-    python3 draft.py --username you               # draft night
-    python3 draft.py --rankings my.csv            # layer your own rankings on top
+    python3 draft.py --leagues            # which leagues are saved?
+    python3 draft.py                      # draft night, on the default league
+    python3 draft.py --use espn           # draft night, on another saved league
+    python3 draft.py --preflight          # check BEFORE draft day, then exit
+    python3 draft.py --demo               # rehearse, no network needed
+    python3 draft.py --rankings my.csv    # layer your own rankings on top
+
+Several leagues can be saved at once, each under a short name, so playing in
+more than one -- or on more than one site -- needs no second copy of this tool.
+Add one with --save-as:
+
+    python3 draft.py --espn --league 884705387 --season 2026 --team-id 17 \
+        --save-as espn --preflight
 
 Requires nothing but Python 3.9+. No pip install, no API key.
 """
@@ -32,11 +41,14 @@ from draftkit.session import Session
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="draft.py",
-        description="Live draft board and pick advisor for Sleeper.",
+        description="Live draft board and pick advisor for Sleeper and ESPN.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "run the preflight check hours before your draft, not minutes:\n"
-            "  python3 draft.py --preflight --username <your sleeper name>\n"
+            "  python3 draft.py --preflight              (the default league)\n"
+            "  python3 draft.py --use espn --preflight   (another saved one)\n"
+            "\n"
+            "see what is saved:  python3 draft.py --leagues\n"
         ),
     )
     parser.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
@@ -50,8 +62,24 @@ def main(argv: list[str] | None = None) -> int:
         help="your favourite NFL team, highlighted on the board (e.g. MIA)",
     )
     parser.add_argument(
+        "--use", "--league-name", dest="use", default="", metavar="NAME",
+        help="run against a saved league by name (see --leagues)",
+    )
+    parser.add_argument(
+        "--leagues", action="store_true",
+        help="list the leagues saved in this folder, then exit",
+    )
+    parser.add_argument(
         "--save", action="store_true",
         help=f"remember these settings in {config_mod.CONFIG_NAME} and reuse them next time",
+    )
+    parser.add_argument(
+        "--save-as", default="", metavar="NAME",
+        help="remember these settings under a new name, keeping the leagues already saved",
+    )
+    parser.add_argument(
+        "--set-default", default="", metavar="NAME",
+        help="choose which saved league runs when you type `python3 draft.py` with no flags, then exit",
     )
     parser.add_argument(
         "--espn", action="store_true",
@@ -60,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--season", default="",
         help="season year, for ESPN (e.g. 2026)",
+    )
+    parser.add_argument(
+        "--team-id", default="", metavar="ID",
+        help="your ESPN team id, so the board knows which roster is yours "
+             "(the teamId= number in your league URL)",
     )
     parser.add_argument(
         "--espn-login", action="store_true",
@@ -99,34 +132,70 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
-    # Saved defaults fill in anything not given on the command line, so the
+    # ---- housekeeping that prints and exits ------------------------------
+    if args.leagues:
+        return _list_leagues()
+
+    if args.set_default:
+        if not config_mod.set_default(args.set_default):
+            print(f"error: no saved league called '{args.set_default}'.", file=sys.stderr)
+            _list_leagues(sys.stderr)
+            return 2
+        print(f"'{args.set_default}' is now the league that `python3 draft.py` uses.")
+        return 0
+
+    if args.espn_login:
+        return _espn_login()
+
+    # ---- which saved league are we running? ------------------------------
+    # --use names one; --save-as names a new one; otherwise it is the default.
+    name = args.use or args.save_as or config_mod.default_name()
+    known = config_mod.names()
+    if args.use and args.use not in known:
+        print(f"error: no saved league called '{args.use}'.", file=sys.stderr)
+        _list_leagues(sys.stderr)
+        return 2
+
+    # Saved settings fill in anything not given on the command line, so the
     # everyday case is just `python3 draft.py`.
-    saved = config_mod.load()
+    saved = config_mod.load(name=name)
     args.username = args.username or saved.get("username", "")
     args.league = args.league or saved.get("league_id", "")
     args.draft = args.draft or saved.get("draft_id", "")
     args.rankings = args.rankings or saved.get("rankings", "")
     args.team = (args.team or saved.get("favorite_team", "")).upper()
     args.season = args.season or saved.get("season", "")
-    if args.espn:
-        # ESPN has its own league id, kept separate from the Sleeper one.
-        args.league = args.league or saved.get("espn_league_id", "")
+    args.team_id = args.team_id or saved.get("team_id", "")
 
-    if args.save:
+    # The site to talk to is remembered per league, so a saved ESPN league does
+    # not need --espn typed at it every time. An explicit --espn still wins.
+    provider = "espn" if args.espn else str(saved.get("provider") or "sleeper").lower()
+    args.espn = provider == "espn"
+
+    # A team id identifies you on ESPN and nowhere else: Sleeper has a username
+    # for that, and the demo league invents its own ids, so handing either one
+    # an ESPN team id would point "your roster" at a team that is not yours.
+    my_team_id = args.team_id if (args.espn and not args.demo) else ""
+    if not args.demo:
+        logging.info("league '%s' on %s", name, provider.upper())
+
+    if args.save or args.save_as:
         path = config_mod.save(
             {
+                "provider": provider,
                 "username": args.username,
+                "league_id": args.league,
                 "draft_id": args.draft,
+                "season": args.season,
+                "team_id": args.team_id,
                 "favorite_team": args.team,
                 "rankings": args.rankings,
-                "season": args.season,
-                **({"espn_league_id": args.league} if args.espn else {"league_id": args.league}),
-            }
+            },
+            name=name,
         )
-        print(f"saved defaults to {path}")
-
-    if args.espn_login:
-        return _espn_login()
+        print(f"saved league '{name}' to {path}")
+        if len(config_mod.names()) > 1:
+            print(f"run it with:  python3 draft.py --use {name}")
 
     csv_path = Path(args.rankings).expanduser() if args.rankings else None
     if csv_path and not csv_path.exists():
@@ -145,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             return preflight_mod.run(
                 EspnClient(args.league, args.season), username=args.username,
-                league_id=args.league, provider="ESPN",
+                league_id=args.league, provider="ESPN", team_id=args.team_id,
             )
         return preflight_mod.run(
             SleeperClient(), username=args.username, league_id=args.league, draft_id=args.draft
@@ -164,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             client = EspnClient(args.league, args.season)
         else:
             client = SleeperClient()
-        session = Session(client)
+        session = Session(client, user_id=my_team_id)
         try:
             session.connect(args.league, args.draft or None, args.username or None)
         except Exception as exc:
@@ -190,7 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         client = SleeperClient()
 
-    session = Session(client, csv_path=csv_path, favorite_team=args.team)
+    session = Session(client, csv_path=csv_path, favorite_team=args.team,
+                      user_id=my_team_id)
 
     if args.demo:
         logging.info("demo mode — synthetic league, no network calls")
@@ -216,8 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.username and not args.demo:
         url += f"?username={args.username}"
 
+    label = "Demo" if args.demo else ("ESPN" if args.espn else "Sleeper")
     print()
-    print("  Sleeper draft board is running." + ("   [DEMO — synthetic data]" if args.demo else ""))
+    print(f"  {label} draft board is running."
+          + ("   [DEMO — synthetic data]" if args.demo else f"   [league '{name}']"))
     print(f"  ->  {url}")
     print("  Ctrl-C to stop.")
     print()
@@ -235,19 +307,42 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _list_leagues(stream=sys.stdout) -> int:
+    """Print the saved leagues, so nobody has to open the config file."""
+    saved = config_mod.names()
+    if not saved:
+        print(f"\nNo leagues saved yet in {config_mod.CONFIG_NAME}.\n"
+              "Save one by adding --save-as <a short name> to a working command, e.g.\n"
+              "  python3 draft.py --username you --league 123456 --save-as sleeper\n",
+              file=stream)
+        return 0
+    default = config_mod.default_name()
+    print(f"\nLeagues saved in {config_mod.CONFIG_NAME}:\n", file=stream)
+    for name in saved:
+        mark = " *" if name == default else "  "
+        print(mark + " " + config_mod.describe(name, config_mod.load(name=name)), file=stream)
+    print(f"\n  * = the one `python3 draft.py` uses with no flags.\n"
+          f"  Run another with:            python3 draft.py --use <name>\n"
+          f"  Change which one is starred: python3 draft.py --set-default <name>\n",
+          file=stream)
+    return 0
+
+
 def _espn_ready(args) -> str:
     """Empty string when we have what ESPN needs, else what is missing."""
     if not args.league:
         return ("error: ESPN needs a league id.  It is the number in your league URL:\n"
-                "  https://fantasy.espn.com/football/league?leagueId=123456\n"
-                "  python3 draft.py --espn --league 123456 --season 2026")
+                "  https://fantasy.espn.com/football/league?leagueId=123456&teamId=7&seasonId=2026\n"
+                "  python3 draft.py --espn --league 123456 --season 2026 --team-id 7")
     if not args.season:
         return "error: ESPN needs --season (e.g. --season 2026)"
     if not creds_mod.espn_cookies():
-        return ("error: no ESPN credentials stored, which a private league needs.\n"
-                "  python3 draft.py --espn-login\n"
-                "(If your league is public, this is a bug — tell me and I will "
-                "make the check conditional.)")
+        # Not fatal: plenty of ESPN leagues are readable without logging in, and
+        # only ESPN can say whether yours is one of them. Try, and let the
+        # adapter's 401/403 message send you to --espn-login if it is private.
+        print("note: no ESPN cookies stored. Public leagues work without them; "
+              "a private league will answer with an access error, and then you "
+              "run:  python3 draft.py --espn-login", file=sys.stderr)
     return ""
 
 

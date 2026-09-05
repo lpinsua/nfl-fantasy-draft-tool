@@ -20,6 +20,7 @@ from draftkit import credentials
 from draftkit.draftstate import DraftState, parse_draft
 from draftkit.espn import EspnClient
 from draftkit.league import parse_league
+from draftkit.session import Session
 from draftkit.values import build_board
 
 
@@ -199,6 +200,50 @@ class IdentityTest(unittest.TestCase):
     def test_a_swid_owning_no_team_is_not_fatal(self):
         user = self._client_as("{NOBODY}").user("me")
         self.assertEqual(user["user_id"], "", "reports unknown rather than crashing")
+
+
+class TeamIdTest(unittest.TestCase):
+    """The team id out of your own league URL, which needs no cookie at all.
+
+    ESPN puts it right there -- ...?leagueId=884705387&teamId=17&seasonId=2026 --
+    so knowing which roster is yours does not have to depend on the SWID lookup
+    finding your team, which it cannot do for a league you are not logged in to.
+    """
+
+    def _session(self, user_id: str = "") -> Session:
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"})
+        espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
+        session = Session(espn, user_id=user_id)
+        session.connect("999111", None, None)
+        session.stop()
+        return session
+
+    def test_a_given_team_id_becomes_your_identity(self):
+        self.assertEqual(self._session("7").my_user_id, "7")
+
+    def test_a_given_team_id_finds_your_draft_slot(self):
+        session = self._session("7")
+        self.assertEqual(session.state.my_slot, 7, "the whole point: your picks are known")
+
+    def test_it_works_when_the_swid_matches_no_team(self):
+        # The SWID here owns nothing, so without the team id this is blank.
+        self.assertIsNone(self._session().state.my_slot)
+
+    def test_connect_can_be_given_the_team_id_directly(self):
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"})
+        espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
+        session = Session(espn)
+        session.connect("999111", None, None, user_id="5")
+        session.stop()
+        self.assertEqual(session.state.my_slot, 5)
+
+    def test_a_looked_up_username_still_works_when_no_id_is_given(self):
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{OWNER-0007}"})
+        espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
+        session = Session(espn)
+        session.connect("999111", None, "lpinsua")
+        session.stop()
+        self.assertEqual(session.state.my_slot, 7, "the SWID path must not regress")
 
 
 class ScoringLabelTest(unittest.TestCase):

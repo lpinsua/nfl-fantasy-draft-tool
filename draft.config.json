@@ -1,5 +1,18 @@
 {
-  "favorite_team": "MIA",
-  "league_id": "1389723692459638784",
-  "username": "lpinsua"
+  "default_league": "sleeper",
+  "leagues": {
+    "espn": {
+      "favorite_team": "MIA",
+      "league_id": "884705387",
+      "provider": "espn",
+      "season": "2026",
+      "team_id": "17"
+    },
+    "sleeper": {
+      "favorite_team": "MIA",
+      "league_id": "1389723692459638784",
+      "provider": "sleeper",
+      "username": "lpinsua"
+    }
+  }
 }
