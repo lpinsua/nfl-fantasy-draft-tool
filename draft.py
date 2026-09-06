@@ -122,6 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         "--demo-type", default="snake", choices=("snake", "linear", "auction"),
         help="with --demo, the draft format to simulate (default: snake)",
     )
+    parser.add_argument(
+        "--refresh", action="store_true",
+        help="ignore the cached player/projection data for this run and refetch it",
+    )
     parser.add_argument("--no-browser", action="store_true", help="do not open a browser")
     parser.add_argument("--verbose", action="store_true", help="debug logging")
     args = parser.parse_args(argv)
@@ -213,11 +217,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(problem, file=sys.stderr)
                 return 2
             return preflight_mod.run(
-                EspnClient(args.league, args.season), username=args.username,
+                EspnClient(args.league, args.season, refresh=args.refresh),
+                username=args.username,
                 league_id=args.league, provider="ESPN", team_id=args.team_id,
             )
+        sleeper = SleeperClient()
+        sleeper.refresh = args.refresh
         return preflight_mod.run(
-            SleeperClient(), username=args.username, league_id=args.league, draft_id=args.draft
+            sleeper, username=args.username, league_id=args.league, draft_id=args.draft
         )
 
     # ---- review: grade the finished draft and exit -----------------------
@@ -230,9 +237,10 @@ def main(argv: list[str] | None = None) -> int:
             if problem:
                 print(problem, file=sys.stderr)
                 return 2
-            client = EspnClient(args.league, args.season)
+            client = EspnClient(args.league, args.season, refresh=args.refresh)
         else:
             client = SleeperClient()
+            client.refresh = args.refresh
         session = Session(client, user_id=my_team_id)
         try:
             session.connect(args.league, args.draft or None, args.username or None)
@@ -255,9 +263,10 @@ def main(argv: list[str] | None = None) -> int:
         if problem:
             print(problem, file=sys.stderr)
             return 2
-        client = EspnClient(args.league, args.season)
+        client = EspnClient(args.league, args.season, refresh=args.refresh)
     else:
         client = SleeperClient()
+        client.refresh = args.refresh
 
     session = Session(client, csv_path=csv_path, favorite_team=args.team,
                       user_id=my_team_id)

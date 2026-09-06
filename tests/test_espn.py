@@ -8,7 +8,9 @@ is what `--preflight --espn` exists to check.
 
 from __future__ import annotations
 
+import atexit
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -24,8 +26,17 @@ from draftkit.session import Session
 from draftkit.values import build_board
 
 
+# Every EspnClient here gets a throwaway cache directory. Without one they all
+# share ~/.cache/draftkit, so one test's player pool is served to the next and
+# the suite quietly stops testing what it claims to.
+_CACHE = tempfile.TemporaryDirectory()
+CACHE_DIR = Path(_CACHE.name)
+atexit.register(_CACHE.cleanup)
+
+
 def client(league: dict | None = None, players: list[dict] | None = None) -> EspnClient:
-    espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{y}"})
+    espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{y}"},
+                      cache_dir=CACHE_DIR, refresh=True)
     espn._fetch = ef.FakeEspnTransport(league, players)      # noqa: SLF001 - test seam
     return espn
 
@@ -180,7 +191,8 @@ class IdentityTest(unittest.TestCase):
     """Your draft slot is found by resolving the SWID to the team it owns."""
 
     def _client_as(self, swid: str) -> EspnClient:
-        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": swid})
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": swid},
+                          cache_dir=CACHE_DIR, refresh=True)
         espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
         return espn
 
@@ -202,6 +214,69 @@ class IdentityTest(unittest.TestCase):
         self.assertEqual(user["user_id"], "", "reports unknown rather than crashing")
 
 
+class ProjectionSeasonTest(unittest.TestCase):
+    """ESPN ships every season's stat line in one list, newest not guaranteed.
+
+    Matching only on statSourceId/statSplitTypeId and taking the first hit
+    returns whichever season happens to come first -- so the board can quietly
+    show last season's projection and disagree with what ESPN displays.
+    """
+
+    def _player(self, lines: list[dict]) -> list[dict]:
+        return [{
+            "id": 1,
+            "player": {
+                "id": 1, "fullName": "Two Seasons", "defaultPositionId": 2,
+                "proTeamId": 15,
+                "draftRanksByRankType": {"PPR": {"rank": 1}},
+                "stats": lines,
+            },
+        }]
+
+    def _points(self, lines: list[dict], season: int = 2026) -> float | None:
+        espn = EspnClient("999111", season, cookies={"espn_s2": "x", "SWID": "{y}"},
+                          cache_dir=CACHE_DIR, refresh=True)
+        espn._fetch = ef.FakeEspnTransport(players=self._player(lines))   # noqa: SLF001
+        rows = espn.projections(season)
+        return rows[0]["stats"]["pts_league"] if rows else None
+
+    def test_the_asked_for_season_wins_over_an_earlier_one(self):
+        lines = [
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2025, "appliedTotal": 111.0},
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2026, "appliedTotal": 222.0},
+        ]
+        self.assertEqual(self._points(lines), 222.0)
+
+    def test_order_in_the_payload_does_not_decide_it(self):
+        # The same two lines the other way round must give the same answer.
+        lines = [
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2026, "appliedTotal": 222.0},
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2025, "appliedTotal": 111.0},
+        ]
+        self.assertEqual(self._points(lines), 222.0)
+
+    def test_a_wrong_season_alone_is_not_used(self):
+        lines = [
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2025, "appliedTotal": 111.0},
+        ]
+        self.assertIsNone(self._points(lines), "better no number than a stale one")
+
+    def test_a_payload_without_seasons_still_works(self):
+        # Older/thinner payloads omit seasonId; those must not regress.
+        lines = [
+            {"statSourceId": 1, "statSplitTypeId": 0, "appliedTotal": 333.0},
+        ]
+        self.assertEqual(self._points(lines), 333.0)
+
+    def test_actuals_and_weekly_lines_are_still_ignored(self):
+        lines = [
+            {"statSourceId": 0, "statSplitTypeId": 0, "seasonId": 2026, "appliedTotal": 999.0},
+            {"statSourceId": 1, "statSplitTypeId": 1, "seasonId": 2026, "appliedTotal": 12.0},
+            {"statSourceId": 1, "statSplitTypeId": 0, "seasonId": 2026, "appliedTotal": 222.0},
+        ]
+        self.assertEqual(self._points(lines), 222.0)
+
+
 class TeamIdTest(unittest.TestCase):
     """The team id out of your own league URL, which needs no cookie at all.
 
@@ -211,7 +286,8 @@ class TeamIdTest(unittest.TestCase):
     """
 
     def _session(self, user_id: str = "") -> Session:
-        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"})
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"},
+                          cache_dir=CACHE_DIR, refresh=True)
         espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
         session = Session(espn, user_id=user_id)
         session.connect("999111", None, None)
@@ -230,7 +306,8 @@ class TeamIdTest(unittest.TestCase):
         self.assertIsNone(self._session().state.my_slot)
 
     def test_connect_can_be_given_the_team_id_directly(self):
-        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"})
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{NOBODY}"},
+                          cache_dir=CACHE_DIR, refresh=True)
         espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
         session = Session(espn)
         session.connect("999111", None, None, user_id="5")
@@ -238,7 +315,8 @@ class TeamIdTest(unittest.TestCase):
         self.assertEqual(session.state.my_slot, 5)
 
     def test_a_looked_up_username_still_works_when_no_id_is_given(self):
-        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{OWNER-0007}"})
+        espn = EspnClient("999111", 2026, cookies={"espn_s2": "x", "SWID": "{OWNER-0007}"},
+                          cache_dir=CACHE_DIR, refresh=True)
         espn._fetch = ef.FakeEspnTransport()          # noqa: SLF001
         session = Session(espn)
         session.connect("999111", None, "lpinsua")

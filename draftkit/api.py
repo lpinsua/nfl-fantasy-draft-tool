@@ -115,6 +115,7 @@ class SleeperClient:
         return _get(f"{API}/v1/state/nfl") or {}
 
     def players(self, max_age: float = 12 * 3600) -> dict[str, dict]:
+        max_age = 0 if getattr(self, "refresh", False) else max_age
         """The full NFL player universe, keyed by Sleeper player_id.
 
         This is a ~5MB document. Sleeper explicitly asks callers to fetch it
@@ -134,6 +135,7 @@ class SleeperClient:
             return data
 
     def projections(self, season: str | int, max_age: float = 6 * 3600) -> list[dict]:
+        max_age = 0 if getattr(self, "refresh", False) else max_age
         """Season-long projections including ADP for several scoring formats.
 
         Undocumented endpoint, so this tries a couple of known shapes and

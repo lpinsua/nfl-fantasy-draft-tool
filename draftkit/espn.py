@@ -72,9 +72,13 @@ class EspnClient:
     """A Sleeper-shaped view of one ESPN league."""
 
     def __init__(self, league_id: str, season: str | int, cache_dir: Path | None = None,
-                 cookies: dict[str, str] | None = None):
+                 cookies: dict[str, str] | None = None, refresh: bool = False):
         self.league_id = str(league_id)
         self.season = str(season)
+        # The player pool is cached for hours, which is right on draft night --
+        # but wrong straight after an upgrade, when the cache still holds
+        # numbers the old code computed. --refresh ignores it for one run.
+        self.refresh = bool(refresh)
         self.cookies = cookies if cookies is not None else espn_cookies()
         root = cache_dir or (Path.home() / ".cache" / "draftkit")
         self.cache = Cache(root)
@@ -277,7 +281,8 @@ class EspnClient:
 
     def _player_rows(self, limit: int = 900) -> list[dict]:
         """The player pool with season projections, in one filtered request."""
-        cached = self.cache.get(f"espn_players_{self.league_id}_{self.season}", 6 * 3600)
+        max_age = 0 if self.refresh else 6 * 3600
+        cached = self.cache.get(f"espn_players_{self.league_id}_{self.season}", max_age)
         if cached is not None:
             return cached
 
@@ -333,7 +338,7 @@ class EspnClient:
             pid = str(row.get("id") or player.get("id") or "")
             if not pid:
                 continue
-            total = _projected_total(player)
+            total = _projected_total(player, self.season)
             if total is None:
                 continue
             rank = _draft_rank(player)
@@ -390,15 +395,34 @@ def _draft_rank(player: dict) -> float | None:
     return None
 
 
-def _projected_total(player: dict) -> float | None:
-    """The season projection ESPN has already scored for this league."""
+def _projected_total(player: dict, season: str | int = "") -> float | None:
+    """The season projection ESPN has already scored for this league.
+
+    ESPN ships one stat line per season in the same list, so the source and
+    split ids alone do not identify a line: matching on those two and taking
+    the first hit can return *last* season's projection, which is why the
+    board's numbers would not agree with what ESPN shows. Prefer the line whose
+    ``seasonId`` is the season we asked for, and only fall back to a
+    season-less match for payloads that do not carry the field at all.
+    """
+    wanted = str(season or "")
+    fallback: float | None = None
     for entry in player.get("stats") or []:
-        if (entry.get("statSourceId") == PROJECTED
-                and entry.get("statSplitTypeId") == SEASON_SPLIT):
-            total = entry.get("appliedTotal")
-            if total is not None:
-                try:
-                    return float(total)
-                except (TypeError, ValueError):
-                    return None
-    return None
+        if (entry.get("statSourceId") != PROJECTED
+                or entry.get("statSplitTypeId") != SEASON_SPLIT):
+            continue
+        total = entry.get("appliedTotal")
+        if total is None:
+            continue
+        try:
+            value = float(total)
+        except (TypeError, ValueError):
+            continue
+        entry_season = entry.get("seasonId")
+        if entry_season is not None:
+            if str(entry_season) == wanted:
+                return value
+            continue                # a real season, but not the one asked for
+        if fallback is None:
+            fallback = value
+    return fallback
