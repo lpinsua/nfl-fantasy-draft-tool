@@ -7,6 +7,7 @@
     python3 draft.py --preflight          # check BEFORE draft day, then exit
     python3 draft.py --demo               # rehearse, no network needed
     python3 draft.py --rankings my.csv    # layer your own rankings on top
+    python3 draft.py --use espn --trades  # in season: your team, and trades to offer
 
 Several leagues can be saved at once, each under a short name, so playing in
 more than one -- or on more than one site -- needs no second copy of this tool.
@@ -31,6 +32,7 @@ from draftkit import config as config_mod
 from draftkit import credentials as creds_mod
 from draftkit import preflight as preflight_mod
 from draftkit import review as review_mod
+from draftkit import trades as trades_mod
 from draftkit.api import SleeperClient
 from draftkit.demo import DemoClient
 from draftkit.espn import EspnClient
@@ -101,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--review", action="store_true",
         help="grade the completed draft against the rest of the league, then exit",
+    )
+    parser.add_argument(
+        "--trades", nargs="*", default=None, metavar="TEAM",
+        help="in season: rate your team and suggest trades, then exit. Name teams "
+             "to focus on them (e.g. --trades \"Naber Hood\"); name none to scan the league",
     )
     parser.add_argument(
         "--preflight", action="store_true",
@@ -227,6 +234,10 @@ def main(argv: list[str] | None = None) -> int:
             sleeper, username=args.username, league_id=args.league, draft_id=args.draft
         )
 
+    # ---- trades: in-season report and exit ------------------------------
+    if args.trades is not None:
+        return _trades(args, args.trades)
+
     # ---- review: grade the finished draft and exit -----------------------
     if args.review:
         if not (args.league or args.draft):
@@ -334,6 +345,50 @@ def _list_leagues(stream=sys.stdout) -> int:
           f"  Run another with:            python3 draft.py --use <name>\n"
           f"  Change which one is starred: python3 draft.py --set-default <name>\n",
           file=stream)
+    return 0
+
+
+def _trades(args, wanted: list[str]) -> int:
+    """Print the in-season team report and trade suggestions."""
+    from draftkit.league import parse_league
+
+    if not args.espn:
+        print("error: the trade finder works with ESPN leagues for now. Run it on\n"
+              "your ESPN league with:\n"
+              "  python3 draft.py --use espn --trades", file=sys.stderr)
+        return 2
+    problem = _espn_ready(args)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    if not args.team_id:
+        print("error: the trade finder needs to know which team is yours. Add\n"
+              "  --team-id <n>   (the teamId= number in your ESPN league URL)", file=sys.stderr)
+        return 2
+
+    client = EspnClient(args.league, args.season, refresh=args.refresh)
+    try:
+        league = parse_league(client.league(args.league))
+        snap = trades_mod.build_snapshot(client.season_snapshot(), league)
+    except Exception as exc:
+        print(f"error: could not load the league: {exc}", file=sys.stderr)
+        return 1
+
+    targets = []
+    for name in wanted:
+        found = snap.find(name)
+        if len(found) != 1:
+            teams = "\n".join(f"  {t.name}" for t in snap.teams)
+            why = "matches no team" if not found else "matches more than one team"
+            print(f"error: '{name}' {why}. The teams in this league are:\n{teams}",
+                  file=sys.stderr)
+            return 2
+        if found[0].team_id == str(args.team_id):
+            print(f"error: '{name}' is your own team.", file=sys.stderr)
+            return 2
+        targets.append(found[0])
+
+    print(trades_mod.render(snap, args.team_id, targets or None))
     return 0
 
 

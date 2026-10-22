@@ -142,3 +142,78 @@ class FakeEspnTransport:
         if "kona_player_info" in views:
             return {"players": self.players}
         return self.league
+
+
+# ---- in season: rosters with this season's numbers --------------------------
+
+def season_player(pid: int, name: str, position_id: int, proj_avg: float,
+                  actual_avg: float | None = None, games: int = 6,
+                  injury: str = "ACTIVE", season: int = 2026) -> dict:
+    """A player record as mRoster / kona_player_info return it mid-season."""
+    stats = [
+        # Last season's actual line -- must be ignored.
+        {"seasonId": season - 1, "scoringPeriodId": 0, "statSourceId": 0,
+         "statSplitTypeId": 0, "appliedTotal": 400.0, "appliedAverage": 23.5},
+        {"seasonId": season, "scoringPeriodId": 0, "statSourceId": 1,
+         "statSplitTypeId": 0, "appliedTotal": round(proj_avg * 17, 2),
+         "appliedAverage": proj_avg},
+    ]
+    if actual_avg is not None and games:
+        stats.append({"seasonId": season, "scoringPeriodId": 0, "statSourceId": 0,
+                      "statSplitTypeId": 0, "appliedTotal": round(actual_avg * games, 2),
+                      "appliedAverage": actual_avg})
+    return {"id": pid, "fullName": name, "defaultPositionId": position_id,
+            "proTeamId": 15, "injuryStatus": injury, "stats": stats}
+
+
+# Four teams. Team 1 ("Home Team") is deep at RB and thin at WR; team 2
+# ("Naber Hood") is the mirror image, so the obvious trade is an RB for a WR.
+# Teams 3 and 4 are balanced filler. Rates are points per week.
+SEASON_ROSTERS = {
+    1: ("Home Team", [("QB", 18), ("RB", 19), ("RB", 17), ("RB", 15.5), ("RB", 13),
+                      ("WR", 11), ("WR", 9), ("TE", 9), ("K", 8), ("DEF", 7)]),
+    2: ("Naber Hood", [("QB", 17), ("RB", 10), ("RB", 8), ("WR", 19), ("WR", 17),
+                       ("WR", 15.5), ("WR", 13), ("TE", 8), ("K", 8), ("DEF", 7)]),
+    3: ("Tio TTs", [("QB", 20), ("RB", 14), ("RB", 12), ("WR", 14), ("WR", 12),
+                    ("WR", 10), ("TE", 12), ("TE", 6), ("K", 8), ("DEF", 8)]),
+    4: ("Squad Four", [("QB", 16), ("RB", 13), ("RB", 11), ("WR", 13), ("WR", 12),
+                       ("WR", 9), ("TE", 7), ("K", 7), ("DEF", 6)]),
+}
+FREE_AGENTS = [("QB", 12), ("QB", 11), ("RB", 7), ("RB", 6), ("WR", 7), ("WR", 6),
+               ("TE", 5), ("TE", 4), ("K", 7), ("K", 6), ("DEF", 6), ("DEF", 5)]
+POSITION_ID = {"QB": 1, "RB": 2, "WR": 3, "TE": 4, "K": 5, "DEF": 16}
+
+# 1QB 2RB 2WR 1TE 1FLEX 1K 1DEF, 6 bench, 1 IR.
+SEASON_LINEUP = dict(LINEUP_SLOT_COUNTS, **{"21": 1})
+
+
+def make_season(week: int = 8, deadline_ms: int | None = 1794636000000):
+    """(league payload with rosters, kona player rows) for a mid-season league."""
+    pid = 5000
+    teams, pool = [], []
+    for team_id, (name, roster) in SEASON_ROSTERS.items():
+        entries = []
+        for pos, rate in roster:
+            pid += 1
+            player = season_player(pid, f"{pos}{pid}", POSITION_ID[pos], rate,
+                                   actual_avg=rate, games=week - 2)
+            pool.append({"id": pid, "onTeamId": team_id, "player": player})
+            entries.append({"playerId": pid, "lineupSlotId": 20,
+                            "playerPoolEntry": {"id": pid, "player": player}})
+        teams.append({
+            "id": team_id, "name": name, "owners": [f"{{OWNER-{team_id:04d}}}"],
+            "record": {"overall": {"wins": team_id, "losses": week - 1 - team_id,
+                                   "ties": 0, "pointsFor": 700.0 + team_id}},
+            "roster": {"entries": entries},
+        })
+    for pos, rate in FREE_AGENTS:
+        pid += 1
+        pool.append({"id": pid, "onTeamId": 0,
+                     "player": season_player(pid, f"FA {pos}{pid}", POSITION_ID[pos], rate)})
+    league = make_league(teams=4, in_progress=False, drafted=True, lineup=SEASON_LINEUP)
+    league["teams"] = teams
+    league["scoringPeriodId"] = week
+    league["status"] = {"currentMatchupPeriod": week}
+    league["settings"]["scheduleSettings"] = {"matchupPeriodCount": 14}
+    league["settings"]["tradeSettings"] = {"deadlineDate": deadline_ms}
+    return league, pool

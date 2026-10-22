@@ -197,13 +197,11 @@ class EspnClient:
         raw = self._league_raw()
         users = []
         for team in raw.get("teams") or []:
-            name = (team.get("name")
-                    or " ".join(filter(None, [team.get("location"), team.get("nickname")]))
-                    or f"Team {team.get('id')}")
+            name = _team_name(team)
             users.append({
                 "user_id": str(team.get("id")),
-                "display_name": name.strip(),
-                "metadata": {"team_name": name.strip()},
+                "display_name": name,
+                "metadata": {"team_name": name},
             })
         return users
 
@@ -350,6 +348,171 @@ class EspnClient:
                     stats[key] = float(rank)
             rows.append({"player_id": pid, "season": self.season, "stats": stats})
         return rows
+
+    # ---- in season: rosters and rest-of-season form ----------------------
+
+    def season_snapshot(self) -> dict:
+        """Every roster as it stands today, and what each player is worth a week.
+
+        This is what the trade finder reads. Never cached: rosters change with
+        every waiver run, and a stale one would suggest trading for a player
+        who is already gone.
+
+        Each player carries ``rate``, the points per week to expect from here
+        on: ESPN's own projection per game, leaning further towards what he has
+        actually averaged the more games he has played.
+        """
+        raw = self._fetch(["mTeam", "mRoster", "mSettings"])
+        if isinstance(raw, list):
+            raw = raw[0] if raw else {}
+        raw = raw or {}
+        settings = raw.get("settings") or {}
+        status = raw.get("status") or {}
+
+        filt = {
+            "players": {
+                "limit": 1000,
+                "sortPercOwned": {"sortPriority": 1, "sortAsc": False},
+                # "00<season>" is this season's actual totals, "10<season>"
+                # its projection -- the two lines the rate is built from.
+                "filterStatsForTopScoringPeriodIds": {
+                    "value": 2,
+                    "additionalValue": [f"00{self.season}", f"10{self.season}"],
+                },
+            }
+        }
+        pool = self._fetch(["kona_player_info"],
+                           headers={"x-fantasy-filter": json.dumps(filt)}, timeout=60.0)
+        if isinstance(pool, list):
+            pool = pool[0] if pool else {}
+
+        players: dict[str, dict] = {}
+
+        def add(pid: str, player: dict) -> None:
+            if pid in players or not player:
+                return
+            position = POSITION_IDS.get(player.get("defaultPositionId"))
+            if not position:
+                return
+            rates = _season_rates(player, self.season)
+            players[pid] = {
+                "player_id": pid,
+                "full_name": player.get("fullName") or "",
+                "position": position,
+                "team": PRO_TEAMS.get(player.get("proTeamId")),
+                "injury_status": _injury(player.get("injuryStatus")),
+                **rates,
+            }
+
+        for row in (pool or {}).get("players") or []:
+            player = row.get("player") or {}
+            add(str(row.get("id") or player.get("id") or ""), player)
+
+        teams = []
+        for team in raw.get("teams") or []:
+            roster = []
+            for entry in ((team.get("roster") or {}).get("entries") or []):
+                pid = str(entry.get("playerId") or "")
+                if not pid:
+                    continue
+                # A rostered player outside the pool request still counts; the
+                # roster entry carries the same player record.
+                add(pid, (entry.get("playerPoolEntry") or {}).get("player") or {})
+                roster.append(pid)
+            overall = ((team.get("record") or {}).get("overall") or {})
+            teams.append({
+                "team_id": str(team.get("id")),
+                "name": _team_name(team),
+                "wins": int(overall.get("wins") or 0),
+                "losses": int(overall.get("losses") or 0),
+                "ties": int(overall.get("ties") or 0),
+                "points_for": float(overall.get("pointsFor") or 0.0),
+                "players": roster,
+            })
+        if not any(t["players"] for t in teams):
+            raise SleeperError(
+                "ESPN returned no rosters for that league. If it is private, run:  "
+                "python3 draft.py --espn-login"
+            )
+
+        week = int(raw.get("scoringPeriodId") or status.get("currentMatchupPeriod") or 1)
+        regular = int((settings.get("scheduleSettings") or {}).get("matchupPeriodCount") or 14)
+        deadline = (settings.get("tradeSettings") or {}).get("deadlineDate")
+        return {
+            "week": week,
+            "regular_season_weeks": regular,
+            "trade_deadline": int(deadline) if deadline else None,
+            "teams": teams,
+            "players": players,
+        }
+
+
+def _team_name(team: dict) -> str:
+    name = (team.get("name")
+            or " ".join(filter(None, [team.get("location"), team.get("nickname")]))
+            or f"Team {team.get('id')}")
+    return name.strip()
+
+
+# How many games of real results it takes before they count for as much as
+# ESPN's projection. Six weeks in, a player's average is half the story.
+PROJECTION_WEIGHT_GAMES = 6.0
+SEASON_GAMES = 17
+
+
+def _season_rates(player: dict, season: str | int) -> dict:
+    """Points per week from here on, plus the two numbers it comes from.
+
+    Only whole-season lines for the season asked for are read: the actual one
+    (statSourceId 0) gives the average so far and, through total / average,
+    how many games that is; the projected one (statSourceId 1) gives ESPN's
+    view per game.
+    """
+    wanted = str(season or "")
+    actual_total = actual_avg = proj_total = proj_avg = None
+    for entry in player.get("stats") or []:
+        if entry.get("statSplitTypeId") != SEASON_SPLIT:
+            continue
+        if entry.get("seasonId") is not None and str(entry.get("seasonId")) != wanted:
+            continue
+        if entry.get("scoringPeriodId") not in (None, 0):
+            continue
+        total, avg = _number(entry.get("appliedTotal")), _number(entry.get("appliedAverage"))
+        if entry.get("statSourceId") == 0 and actual_total is None:
+            actual_total, actual_avg = total, avg
+        elif entry.get("statSourceId") == PROJECTED and proj_total is None:
+            proj_total, proj_avg = total, avg
+
+    games = 0.0
+    if actual_total and actual_avg:
+        games = round(actual_total / actual_avg)
+    if proj_avg is None and proj_total is not None:
+        proj_avg = proj_total / SEASON_GAMES
+    if not games:
+        actual_avg = None
+
+    if proj_avg is None and actual_avg is None:
+        rate = 0.0
+    elif proj_avg is None:
+        rate = actual_avg
+    elif actual_avg is None:
+        rate = proj_avg
+    else:
+        weight = games / (games + PROJECTION_WEIGHT_GAMES)
+        rate = (1 - weight) * proj_avg + weight * actual_avg
+    return {
+        "rate": round(max(0.0, rate), 2),
+        "games": int(games),
+        "actual_avg": round(actual_avg, 2) if actual_avg is not None else None,
+        "proj_avg": round(proj_avg, 2) if proj_avg is not None else None,
+    }
+
+
+def _number(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ESPN's scoringType, where it is reported as a plain string.

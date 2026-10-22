@@ -28,7 +28,22 @@ python3 draft.py --preflight      # same, but check and exit
 python3 draft.py --leagues        # what is saved, and which one is default
 python3 draft.py --use espn       # the ESPN league
 python3 draft.py --set-default espn   # make ESPN the bare-command one
+python3 draft.py --use espn --trades  # in season: team report + trade ideas
+python3 draft.py --use espn --trades "Naber Hood" "Tio TTs"   # focus on teams
 ```
+
+## In season: the trade finder
+
+`--trades` (ESPN only for now) reads every roster via `EspnClient.season_snapshot()`
+and values each player in **points per week from here on**: ESPN's per-game
+projection, blended towards his actual average as games accumulate (equal
+weight at six games), then marked down for injuries with `INJURY_PENALTY`.
+Rosters are judged like the draft review judges them: best starting lineup,
+empty slots at waiver level (the *second*-best free agent), plus a small credit
+for backups who beat the wire. A trade is listed only if it lifts **both**
+lineups (you by 0.5+, them by 1.0+) and does not look lopsided by name value;
+simpler deals rank first. Never cached -- rosters move with every waiver run.
+To support Sleeper, give `SleeperClient` a `season_snapshot()` of the same shape.
 
 Adding another league never disturbs the ones already saved:
 
@@ -95,6 +110,8 @@ draftkit/
   session.py          connected league + background poller
   server.py           stdlib HTTP server + JSON API
   preflight.py        pre-draft self check
+  review.py           post-draft report
+  trades.py           in-season team report + trade finder
   demo.py             synthetic league (shared with the tests)
 web/                  index.html / app.js / style.css
 tests/                offline test suite
